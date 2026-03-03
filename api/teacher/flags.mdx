@@ -1,0 +1,310 @@
+---
+title: Flag management
+description: API endpoints for flagging and reviewing suspicious submission activity
+---
+
+Flags are used by instructors to mark and track suspicious patterns in student submissions. Each flag is associated with a specific submission and includes a type classification and descriptive explanation.
+
+## Create Flag
+
+Create a new flag for a submission to mark suspicious activity.
+
+**Function:** `teacherAssignments.createFlag`
+
+**Type:** Mutation
+
+**Authentication:** Required (instructor access to classroom)
+
+### Parameters
+
+<ParamField path="submissionId" type="Id<'submissions'>" required>
+  The ID of the submission to flag
+</ParamField>
+
+<ParamField path="type" type="string" required>
+  Category of the flag. Common types:
+  - `"suspicious_paste"` - Large code blocks pasted at once
+  - `"rapid_completion"` - Assignment completed unusually fast
+  - `"timing_anomaly"` - Coding activity at unusual times
+  - `"code_similarity"` - High similarity to other submissions
+  - `"ai_generated"` - Suspected AI-generated code patterns
+</ParamField>
+
+<ParamField path="description" type="string" required>
+  Human-readable explanation of why the submission was flagged. Include specific details like timestamps, file names, or patterns observed.
+</ParamField>
+
+### Returns
+
+<ResponseField name="flagId" type="Id<'flags'>">
+  The ID of the newly created flag
+</ResponseField>
+
+### Example
+
+```typescript
+import { useMutation } from "convex/react";
+import { api } from "@package/backend/convex/_generated/api";
+
+const createFlag = useMutation(api.web.teacherAssignments.createFlag);
+
+// Flag a submission with suspicious paste activity
+const flagId = await createFlag({
+  submissionId: submission._id,
+  type: "suspicious_paste",
+  description: "Student pasted 200+ lines of code at 2:34 AM with no prior work on the file. Timeline shows no incremental development."
+});
+```
+
+### Implementation Details
+
+From `packages/backend/convex/web/teacherAssignments.ts:265-290`:
+
+```typescript
+export const createFlag = mutation({
+  args: {
+    submissionId: v.id("submissions"),
+    type: v.string(),
+    description: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+
+    const submission = await ctx.db.get(args.submissionId);
+    if (!submission) {
+      throw new Error("Submission not found");
+    }
+
+    const { classroom } = await getClassroomForAssignment(ctx, submission.assignmentId);
+    await requireInstructorAccess(ctx, classroom._id, user._id);
+
+    const flagId = await ctx.db.insert("flags", {
+      type: args.type,
+      description: args.description,
+      timestamp: Date.now(),
+    });
+
+    await ctx.db.patch(submission._id, {
+      flags: [...submission.flags, flagId],
+    });
+
+    return flagId;
+  },
+});
+```
+
+<Note>
+  Flags are automatically linked to submissions via the `flags` array field. When a submission is deleted, all associated flags are also deleted.
+</Note>
+
+## Get Flags by Submission
+
+Retrieve all flags associated with a specific submission.
+
+**Function:** `teacherAssignments.getFlagsBySubmission`
+
+**Type:** Query
+
+**Authentication:** Required (instructor access to classroom)
+
+### Parameters
+
+<ParamField path="submissionId" type="Id<'submissions'>" required>
+  The ID of the submission to get flags for
+</ParamField>
+
+### Returns
+
+<ResponseField name="flags" type="array">
+  Array of flag objects. Each flag contains:
+  
+  <Expandable title="Flag fields">
+    <ResponseField name="_id" type="Id<'flags'>">
+      Unique flag identifier
+    </ResponseField>
+    
+    <ResponseField name="type" type="string">
+      Flag category/classification
+    </ResponseField>
+    
+    <ResponseField name="description" type="string">
+      Detailed explanation of the flag
+    </ResponseField>
+    
+    <ResponseField name="timestamp" type="number">
+      Unix timestamp (milliseconds) when flag was created
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```typescript
+import { useQuery } from "convex/react";
+import { api } from "@package/backend/convex/_generated/api";
+
+const flags = useQuery(
+  api.web.teacherAssignments.getFlagsBySubmission,
+  { submissionId: submission._id }
+);
+
+// Display flags in UI
+{flags?.map(flag => (
+  <div key={flag._id} className="flag-card">
+    <Badge variant="warning">{flag.type}</Badge>
+    <p>{flag.description}</p>
+    <time>{new Date(flag.timestamp).toLocaleString()}</time>
+  </div>
+))}
+```
+
+## Delete Flag
+
+Remove a flag from a submission. Use this if a flag was created in error or after reviewing and determining the activity was legitimate.
+
+**Function:** `teacherAssignments.deleteFlag`
+
+**Type:** Mutation
+
+**Authentication:** Required (instructor access to classroom)
+
+### Parameters
+
+<ParamField path="submissionId" type="Id<'submissions'>" required>
+  The ID of the submission the flag belongs to
+</ParamField>
+
+<ParamField path="flagId" type="Id<'flags'>" required>
+  The ID of the flag to delete
+</ParamField>
+
+### Returns
+
+<ResponseField name="flagId" type="Id<'flags'>">
+  The ID of the deleted flag
+</ResponseField>
+
+### Example
+
+```typescript
+import { useMutation } from "convex/react";
+import { api } from "@package/backend/convex/_generated/api";
+
+const deleteFlag = useMutation(api.web.teacherAssignments.deleteFlag);
+
+// Remove a flag after review
+await deleteFlag({
+  submissionId: submission._id,
+  flagId: flag._id
+});
+```
+
+### Implementation Details
+
+From `packages/backend/convex/web/teacherAssignments.ts:320-343`:
+
+```typescript
+export const deleteFlag = mutation({
+  args: {
+    submissionId: v.id("submissions"),
+    flagId: v.id("flags"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+
+    const submission = await ctx.db.get(args.submissionId);
+    if (!submission) {
+      throw new Error("Submission not found");
+    }
+
+    const { classroom } = await getClassroomForAssignment(ctx, submission.assignmentId);
+    await requireInstructorAccess(ctx, classroom._id, user._id);
+
+    await ctx.db.patch(submission._id, {
+      flags: submission.flags.filter((id) => id !== args.flagId),
+    });
+
+    await ctx.db.delete(args.flagId);
+
+    return args.flagId;
+  },
+});
+```
+
+## Flag Workflow
+
+The typical workflow for flagging suspicious submissions:
+
+<Steps>
+  <Step title="Review submission history">
+    Use the replay feature to watch the student's coding process and identify suspicious patterns.
+  </Step>
+  
+  <Step title="Create flag">
+    If suspicious activity is found, create a flag with a specific type and detailed description.
+  </Step>
+  
+  <Step title="Investigate further">
+    Review the flag during grading. Compare with other submissions, check for code similarity, or interview the student if needed.
+  </Step>
+  
+  <Step title="Take action">
+    - If confirmed: Apply academic integrity policy (grade reduction, report to administration)
+    - If false positive: Delete the flag and grade normally
+  </Step>
+</Steps>
+
+<Warning>
+  Flags are internal to instructors. Students cannot see flags on their submissions. Use the `submissionFeedback` field to communicate with students about concerns.
+</Warning>
+
+## Best Practices
+
+### Flag Types
+
+Use consistent flag type strings across your institution:
+
+```typescript
+const FLAG_TYPES = {
+  SUSPICIOUS_PASTE: "suspicious_paste",
+  RAPID_COMPLETION: "rapid_completion",
+  TIMING_ANOMALY: "timing_anomaly",
+  CODE_SIMILARITY: "code_similarity",
+  AI_GENERATED: "ai_generated",
+  NO_INCREMENTAL_WORK: "no_incremental_work",
+  EXTERNAL_COLLABORATION: "external_collaboration"
+} as const;
+```
+
+### Descriptive Flags
+
+Include specific details in flag descriptions:
+
+✅ **Good:**
+```
+"Student pasted 245 lines in sorting.py at 03:14 AM on 2024-03-15. 
+No previous edits to this file. Code matches Stack Overflow post from 2023."
+```
+
+❌ **Bad:**
+```
+"Suspicious activity"
+```
+
+### Privacy Considerations
+
+- Never share flag details with other students
+- Include only factual observations in flag descriptions
+- Avoid conclusive accusations; flags are for investigation, not judgment
+- Follow your institution's academic integrity policies
+
+## Related Endpoints
+
+<CardGroup cols={2}>
+  <Card title="Reviewing History" icon="clock-rotate-left" href="/teachers/reviewing-history">
+    Learn how to use the replay feature to identify patterns
+  </Card>
+  <Card title="Grading Submissions" icon="pen" href="/teachers/grading-submissions">
+    Grade submissions and provide feedback
+  </Card>
+</CardGroup>

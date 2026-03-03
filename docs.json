@@ -92,6 +92,13 @@
             ]
           },
           {
+            "group": "Teacher Endpoints",
+            "pages": [
+              "api/teacher/flags",
+              "api/teacher/statistics"
+            ]
+          },
+          {
             "group": "Event Tracking",
             "pages": [
               "api/events/overview",

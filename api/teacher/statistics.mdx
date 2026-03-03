@@ -1,0 +1,361 @@
+---
+title: Submission statistics
+description: API endpoints for viewing submission and grading statistics
+---
+
+Statistics endpoints provide instructors with real-time metrics about assignment submissions, grading progress, and classroom performance.
+
+## Get Assignment Submission Stats
+
+Retrieve submission statistics for a specific assignment.
+
+**Function:** `teacherAssignments.getAssignmentSubmissionStats`
+
+**Type:** Query
+
+**Authentication:** Required (instructor access to classroom)
+
+### Parameters
+
+<ParamField path="assignmentId" type="Id<'assignments'>" required>
+  The ID of the assignment to get statistics for
+</ParamField>
+
+### Returns
+
+<ResponseField name="stats" type="object">
+  Statistics object containing:
+  
+  <Expandable title="Statistics fields">
+    <ResponseField name="totalStudents" type="number">
+      Total number of students enrolled in the classroom
+    </ResponseField>
+    
+    <ResponseField name="totalSubmissions" type="number">
+      Number of submissions received for this assignment
+    </ResponseField>
+    
+    <ResponseField name="submissionRate" type="number">
+      Percentage of enrolled students who have submitted (0-100)
+    </ResponseField>
+    
+    <ResponseField name="graded" type="number">
+      Number of submissions that have been graded
+    </ResponseField>
+    
+    <ResponseField name="ungraded" type="number">
+      Number of submissions awaiting grading
+    </ResponseField>
+    
+    <ResponseField name="averageGrade" type="number | null">
+      Mean grade across all graded submissions, or null if no submissions are graded
+    </ResponseField>
+    
+    <ResponseField name="flagged" type="number">
+      Number of submissions with one or more flags
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```typescript
+import { useQuery } from "convex/react";
+import { api } from "@package/backend/convex/_generated/api";
+
+function AssignmentStats({ assignmentId }: { assignmentId: Id<"assignments"> }) {
+  const stats = useQuery(
+    api.web.teacherAssignments.getAssignmentSubmissionStats,
+    { assignmentId }
+  );
+
+  if (!stats) return <Skeleton />;
+
+  return (
+    <div className="stats-grid">
+      <StatCard 
+        label="Submission Rate" 
+        value={`${stats.submissionRate.toFixed(1)}%`}
+        detail={`${stats.totalSubmissions} of ${stats.totalStudents} students`}
+      />
+      <StatCard 
+        label="Grading Progress" 
+        value={`${stats.graded}/${stats.totalSubmissions}`}
+        detail={`${stats.ungraded} remaining`}
+      />
+      <StatCard 
+        label="Average Grade" 
+        value={stats.averageGrade?.toFixed(1) ?? "N/A"}
+      />
+      <StatCard 
+        label="Flagged" 
+        value={stats.flagged}
+        variant={stats.flagged > 0 ? "warning" : "default"}
+      />
+    </div>
+  );
+}
+```
+
+### Implementation Details
+
+From `packages/backend/convex/web/teacherAssignments.ts:345-395`:
+
+```typescript
+export const getAssignmentSubmissionStats = query({
+  args: {
+    assignmentId: v.id("assignments"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+
+    const assignment = await ctx.db.get(args.assignmentId);
+    if (!assignment) {
+      throw new Error("Assignment not found");
+    }
+
+    const classroom = await ctx.db.get(assignment.classroomId);
+    if (!classroom) {
+      throw new Error("Classroom not found");
+    }
+
+    await requireInstructorAccess(ctx, classroom._id, user._id);
+
+    // Get all enrolled students
+    const enrollments = await ctx.db
+      .query("classroomStudentsRelations")
+      .withIndex("classroomId_studentId", (q) => 
+        q.eq("classroomId", classroom._id)
+      )
+      .collect();
+
+    // Get all submissions
+    const submissions = await ctx.db
+      .query("submissions")
+      .withIndex("assignmentId_studentId", (q) => 
+        q.eq("assignmentId", args.assignmentId)
+      )
+      .collect();
+
+    const graded = submissions.filter(s => s.grade !== undefined).length;
+    const flagged = submissions.filter(s => s.flags.length > 0).length;
+    
+    const grades = submissions
+      .map(s => s.grade)
+      .filter((g): g is number => g !== undefined);
+    
+    const averageGrade = grades.length > 0
+      ? grades.reduce((sum, g) => sum + g, 0) / grades.length
+      : null;
+
+    return {
+      totalStudents: enrollments.length,
+      totalSubmissions: submissions.length,
+      submissionRate: enrollments.length > 0 
+        ? (submissions.length / enrollments.length) * 100 
+        : 0,
+      graded,
+      ungraded: submissions.length - graded,
+      averageGrade,
+      flagged,
+    };
+  },
+});
+```
+
+<Info>
+  Statistics are computed in real-time from the database. For large classrooms, consider caching results if performance becomes an issue.
+</Info>
+
+## Get Classroom Submission Stats
+
+Retrieve aggregated statistics for all assignments in a classroom.
+
+**Function:** `teacherAssignments.getClassroomSubmissionStats`
+
+**Type:** Query
+
+**Authentication:** Required (instructor access to classroom)
+
+### Parameters
+
+<ParamField path="classroomId" type="Id<'classrooms'>" required>
+  The ID of the classroom to get statistics for
+</ParamField>
+
+### Returns
+
+<ResponseField name="stats" type="array">
+  Array of statistics, one per assignment in the classroom:
+  
+  <Expandable title="Per-assignment stats">
+    <ResponseField name="assignmentId" type="Id<'assignments'>">
+      Assignment identifier
+    </ResponseField>
+    
+    <ResponseField name="assignmentName" type="string">
+      Display name of the assignment
+    </ResponseField>
+    
+    <ResponseField name="submissions" type="number">
+      Total number of submissions for this assignment
+    </ResponseField>
+    
+    <ResponseField name="submissionRate" type="number">
+      Percentage of enrolled students who submitted (0-100)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example
+
+```typescript
+import { useQuery } from "convex/react";
+import { api } from "@package/backend/convex/_generated/api";
+
+function ClassroomOverview({ classroomId }: { classroomId: Id<"classrooms"> }) {
+  const stats = useQuery(
+    api.web.teacherAssignments.getClassroomSubmissionStats,
+    { classroomId }
+  );
+
+  if (!stats) return <Skeleton />;
+
+  return (
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead>Assignment</TableHead>
+          <TableHead>Submissions</TableHead>
+          <TableHead>Rate</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {stats.map(stat => (
+          <TableRow key={stat.assignmentId}>
+            <TableCell>{stat.assignmentName}</TableCell>
+            <TableCell>{stat.submissions}</TableCell>
+            <TableCell>
+              <ProgressBar value={stat.submissionRate} />
+              {stat.submissionRate.toFixed(1)}%
+            </TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+```
+
+### Use Cases
+
+**Dashboard Overview:**
+Display a summary table of all assignments and their submission rates to quickly identify assignments that need attention.
+
+**Engagement Tracking:**
+Monitor which assignments have low submission rates and send reminders to students.
+
+**Workload Planning:**
+See which assignments have the most ungraded submissions to prioritize grading time.
+
+## Common Patterns
+
+### Real-Time Statistics Dashboard
+
+Combine both statistics endpoints for a comprehensive instructor dashboard:
+
+```typescript
+function InstructorDashboard({ classroomId }: Props) {
+  const classroomStats = useQuery(
+    api.web.teacherAssignments.getClassroomSubmissionStats,
+    { classroomId }
+  );
+  
+  const [selectedAssignment, setSelectedAssignment] = useState<Id<"assignments"> | null>(null);
+  
+  const assignmentStats = useQuery(
+    selectedAssignment
+      ? api.web.teacherAssignments.getAssignmentSubmissionStats
+      : undefined,
+    selectedAssignment ? { assignmentId: selectedAssignment } : "skip"
+  );
+
+  return (
+    <div className="dashboard">
+      <ClassroomOverviewTable 
+        stats={classroomStats} 
+        onSelectAssignment={setSelectedAssignment}
+      />
+      {assignmentStats && (
+        <AssignmentDetailsPanel stats={assignmentStats} />
+      )}
+    </div>
+  );
+}
+```
+
+### Submission Rate Alerts
+
+Create alerts when submission rates are low:
+
+```typescript
+function SubmissionRateAlert({ assignmentId }: Props) {
+  const stats = useQuery(
+    api.web.teacherAssignments.getAssignmentSubmissionStats,
+    { assignmentId }
+  );
+
+  if (!stats) return null;
+
+  const isLowSubmissionRate = stats.submissionRate < 50;
+  const isDueSoon = assignment.dueDate < Date.now() + 24 * 60 * 60 * 1000;
+
+  if (isLowSubmissionRate && isDueSoon) {
+    return (
+      <Alert variant="warning">
+        Only {stats.submissionRate.toFixed(0)}% of students have submitted.
+        Consider sending a reminder email.
+      </Alert>
+    );
+  }
+
+  return null;
+}
+```
+
+## Performance Considerations
+
+<Warning>
+  Statistics queries scan all submissions and enrollments. For classrooms with 100+ students and many assignments, these queries may take several seconds.
+</Warning>
+
+**Optimization strategies:**
+
+1. **Cache results:** Store statistics in React state and refresh periodically:
+   ```typescript
+   const [stats, setStats] = useState(null);
+   
+   useEffect(() => {
+     const interval = setInterval(async () => {
+       const newStats = await getStats();
+       setStats(newStats);
+     }, 30000); // Refresh every 30 seconds
+     
+     return () => clearInterval(interval);
+   }, []);
+   ```
+
+2. **Lazy load:** Only fetch stats when the instructor visits the dashboard, not on every page load.
+
+3. **Show skeleton states:** Display loading skeletons while stats are being computed to improve perceived performance.
+
+## Related Endpoints
+
+<CardGroup cols={2}>
+  <Card title="Flag Management" icon="flag" href="/api/teacher/flags">
+    Flag suspicious submissions for review
+  </Card>
+  <Card title="Grading Submissions" icon="pen" href="/api/assignment/submissions">
+    Grade and provide feedback on submissions
+  </Card>
+</CardGroup>
