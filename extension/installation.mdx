@@ -1,0 +1,64 @@
+---
+title: Installation
+description: Install and set up the Leopard VSCode extension to track student coding activity
+---
+
+The Leopard VSCode extension captures granular version history and coding events to verify the legitimacy of student assignments.
+
+<Steps>
+  <Step title="Check System Requirements">
+    Ensure your system meets the following requirements:
+    
+    - **VS Code Version**: 1.105.0 or higher
+    - **Operating System**: Windows, macOS, or Linux
+    - **Network**: Active internet connection to send events to Convex backend
+  </Step>
+
+  <Step title="Install from VSIX">
+    Currently, the Leopard extension is distributed as a VSIX package. To install:
+
+    1. Download the latest `.vsix` file from your institution or instructor
+    2. Open VS Code
+    3. Press `Cmd+Shift+P` (macOS) or `Ctrl+Shift+P` (Windows/Linux) to open the Command Palette
+    4. Type "Extensions: Install from VSIX" and select it
+    5. Navigate to the downloaded `.vsix` file and select it
+    6. VS Code will install the extension and prompt you to reload
+
+    <Note>
+      The extension is not yet published to the VS Code Marketplace. If you need to build the extension yourself, navigate to `apps/vscode-extension` and run `pnpm run build` to generate the VSIX package.
+    </Note>
+  </Step>
+
+  <Step title="Verify Installation">
+    After installation, verify the extension is running:
+
+    1. Open the Output panel: `View > Output` or `Cmd+Shift+U` (macOS) / `Ctrl+Shift+U` (Windows/Linux)
+    2. In the dropdown menu, select **Leopard Event Logger**
+    3. You should see initialization messages like:
+
+    ```
+    [INIT] Leopard extension activated
+    [INIT] Convex URL: https://optimistic-kangaroo-331.convex.cloud
+    [INIT] Hostname: your-computer-name
+    ```
+
+    If you see these messages, the extension is successfully installed and running.
+  </Step>
+
+  <Step title="Configure Convex URL (Optional)">
+    By default, the extension connects to the main Leopard backend. If your institution uses a custom deployment, you'll need to configure the Convex URL.
+
+    See the [Configuration](/extension/configuration) page for details.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+If the extension doesn't activate:
+
+- Ensure you're running VS Code 1.105.0 or higher
+- Check the Output panel for error messages
+- Try reloading VS Code: `Cmd+Shift+P` > "Developer: Reload Window"
+- Verify your network connection allows HTTPS traffic to the Convex backend
+
+For additional help, contact your instructor or institution's technical support.

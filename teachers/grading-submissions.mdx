@@ -1,0 +1,420 @@
+---
+title: Grading Submissions
+description: Learn how to grade student submissions and provide feedback
+---
+
+Leopard provides a comprehensive grading workflow for reviewing student submissions, assigning grades, and providing feedback.
+
+## Submission Schema
+
+Each submission contains:
+
+```typescript
+// From: packages/backend/convex/schema.ts:37-51
+submissions: {
+  assignmentId: Id<"assignments">,
+  flags: Id<"flags">[],
+  grade?: number,
+  studentId: string,                    // Better Auth user ID
+  submissionFeedback?: string,
+  workspaceId?: Id<"workspaces">,
+  submittedAt: number,                  // Unix timestamp
+  gradedBy?: string,                    // Better Auth user ID
+  gradedAt?: number,                    // Unix timestamp
+  gradesReleased: boolean
+}
+
+// Indexed by: studentId_assignmentId, assignmentId_studentId
+```
+
+## Viewing Submissions
+
+Access all submissions for an assignment:
+
+```typescript
+// From: packages/backend/convex/web/teacherAssignments.ts:198-212
+const submissions = await getSubmissionsByAssignment({
+  assignmentId: "assignment_id"
+});
+
+// Returns array of submission documents
+// Requires instructor access to the classroom
+```
+
+The assignment detail page shows submissions automatically:
+
+```tsx
+// From: apps/nextjs/src/app/teacher/classroom/[id]/assignment/[assignmentId]/page.tsx:154-160
+const submissions = useQuery(
+  api.web.teacherAssignments.getSubmissionsByAssignment,
+  { assignmentId }
+);
+```
+
+## Grading Workflow
+
+<Steps>
+  <Step title="Open Assignment Detail Page">
+    Navigate to your assignment at:
+    ```
+    /teacher/classroom/{classroomId}/assignment/{assignmentId}
+    ```
+  </Step>
+  
+  <Step title="Review Student Work">
+    Each submission card displays:
+    
+    ```tsx
+    // From: apps/nextjs/src/app/teacher/classroom/[id]/assignment/[assignmentId]/page.tsx:85-98
+    <CardHeader>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <CardTitle>{submission.studentId}</CardTitle>
+          <CardDescription>
+            Submitted {new Date(submission.submittedAt).toLocaleString()}
+          </CardDescription>
+        </div>
+        {submission.grade !== undefined && (
+          <div className="rounded-full px-2.5 py-0.5 text-sm font-semibold">
+            {submission.grade}
+          </div>
+        )}
+      </div>
+    </CardHeader>
+    ```
+  </Step>
+  
+  <Step title="Assign Grade and Feedback">
+    Enter a numeric grade and optional feedback:
+    
+    ```tsx
+    // From: apps/nextjs/src/app/teacher/classroom/[id]/assignment/[assignmentId]/page.tsx:102-136
+    <Input
+      id={`grade-${submission._id}`}
+      value={grade}
+      onChange={(event) => setGrade(event.target.value)}
+      placeholder="e.g. 95"
+      type="number"
+      step="0.01"
+    />
+    
+    <textarea
+      id={`feedback-${submission._id}`}
+      rows={4}
+      value={feedback}
+      onChange={(event) => setFeedback(event.target.value)}
+      placeholder="Feedback for the student"
+    />
+    ```
+  </Step>
+  
+  <Step title="Save Grade">
+    Click "Save Grade & Feedback" to submit:
+    
+    ```tsx
+    // From: apps/nextjs/src/app/teacher/classroom/[id]/assignment/[assignmentId]/page.tsx:255-271
+    const handleSaveSubmission = async (
+      submissionId: Id<"submissions">,
+      grade: number | null,
+      feedback: string,
+    ) => {
+      if (grade !== null) {
+        await gradeSubmission({
+          submissionId,
+          grade,
+        });
+      }
+      
+      await provideSubmissionFeedback({
+        submissionId,
+        feedback,
+      });
+    };
+    ```
+  </Step>
+</Steps>
+
+## Grading API
+
+### Assigning a Grade
+
+Set a numeric grade for a submission:
+
+```typescript
+// From: packages/backend/convex/web/teacherAssignments.ts:215-238
+await gradeSubmission({
+  submissionId: "submission_id",
+  grade: 95.5
+});
+
+// Updates the submission with:
+{
+  grade: 95.5,
+  gradedBy: user._id,      // ID of teacher/TA who graded
+  gradedAt: Date.now()     // Timestamp of grading
+}
+```
+
+<Note>
+  Grades are stored as `float64` values, allowing for decimal grades like 95.5 or 87.25.
+</Note>
+
+### Providing Feedback
+
+Add written feedback for students:
+
+```typescript
+// From: packages/backend/convex/web/teacherAssignments.ts:241-262
+await provideSubmissionFeedback({
+  submissionId: "submission_id",
+  feedback: "Great work on the algorithm implementation. Consider optimizing the space complexity in your next submission."
+});
+
+// Updates:
+{
+  submissionFeedback: "Great work on..."
+}
+```
+
+Feedback is stored as plain text but can include:
+- Specific code references
+- Improvement suggestions
+- Positive reinforcement
+- Links to resources
+
+## Grade Statistics
+
+The assignment page displays real-time statistics:
+
+```tsx
+// From: apps/nextjs/src/app/teacher/classroom/[id]/assignment/[assignmentId]/page.tsx:273-278
+const totalStudents = submissions?.length ?? 0;
+const submittedCount = submissions?.length ?? 0;
+const gradedCount = submissions?.filter(
+  (submission) => submission.grade !== undefined
+).length ?? 0;
+```
+
+```tsx
+// From: apps/nextjs/src/app/teacher/classroom/[id]/assignment/[assignmentId]/page.tsx:296-313
+<div className="flex items-center gap-4">
+  <span>
+    <Users className="h-4 w-4" />
+    {submittedCount} / {totalStudents} submitted
+  </span>
+  <span>
+    <CheckCircle2 className="h-4 w-4" />
+    {gradedCount} / {submittedCount} graded
+  </span>
+</div>
+
+// Statistics Card
+<div className="space-y-3">
+  <div className="flex justify-between">
+    <span>Total Students</span>
+    <span>{totalStudents}</span>
+  </div>
+  <div className="flex justify-between">
+    <span>Submitted</span>
+    <span>{submittedCount} ({Math.round((submittedCount / totalStudents) * 100)}%)</span>
+  </div>
+  <div className="flex justify-between">
+    <span>Graded</span>
+    <span>{gradedCount} ({Math.round((gradedCount / submittedCount) * 100)}%)</span>
+  </div>
+  <div className="flex justify-between">
+    <span>Avg Grade</span>
+    <span>
+      {(
+        submissions
+          .filter((submission) => submission.grade !== undefined)
+          .reduce((sum, submission) => sum + (submission.grade ?? 0), 0) / gradedCount
+      ).toFixed(1)}
+    </span>
+  </div>
+</div>
+```
+
+## Assignment-Level Statistics
+
+Get aggregate statistics for an assignment:
+
+```typescript
+// From: packages/backend/convex/web/teacherAssignments.ts:358-388
+const stats = await getAssignmentSubmissionStats({
+  assignmentId: "assignment_id"
+});
+
+// Returns:
+{
+  totalStudents: 30,
+  totalSubmissions: 28,
+  submissionRate: 0.9333  // 93.33%
+}
+```
+
+## Classroom-Level Statistics
+
+View submission stats across all past-due assignments:
+
+```typescript
+// From: packages/backend/convex/web/teacherAssignments.ts:391-448
+const stats = await getClassroomSubmissionStats({
+  classroomId: "classroom_id"
+});
+
+// Returns:
+{
+  "assignment_id_1": {
+    assignmentId: "assignment_id_1",
+    assignmentName: "Week 1 - Introduction",
+    submissions: 28,
+    submissionRate: 0.9333
+  },
+  "assignment_id_2": {
+    assignmentId: "assignment_id_2",
+    assignmentName: "Week 2 - Data Structures",
+    submissions: 25,
+    submissionRate: 0.8333
+  }
+}
+
+// Only includes assignments where dueDate < Date.now()
+```
+
+## Grade Release Process
+
+Control when students can view their grades:
+
+```typescript
+// From: packages/backend/convex/schema.ts:47
+gradesReleased: boolean
+
+// When true: students can view their grade and feedback
+// When false: grade is hidden from students
+```
+
+<Warning>
+  The grade release functionality is tracked in the schema but not yet fully implemented in the UI. Currently, grades are visible to students immediately upon being saved.
+</Warning>
+
+### Planned Grade Release Features
+
+1. **Bulk Release**: Release all grades for an assignment at once
+2. **Individual Release**: Release grades one student at a time
+3. **Scheduled Release**: Set a future date/time for automatic release
+4. **Conditional Release**: Release grades when all submissions are graded
+
+## Grading Best Practices
+
+<Steps>
+  <Step title="Review Before Grading">
+    Use the history replay feature to understand student work patterns before assigning grades.
+  </Step>
+  
+  <Step title="Consistent Rubrics">
+    Maintain consistent grading standards across all submissions for the same assignment.
+  </Step>
+  
+  <Step title="Detailed Feedback">
+    Provide specific, actionable feedback that helps students improve.
+  </Step>
+  
+  <Step title="Regular Updates">
+    Grade submissions promptly to give students timely feedback.
+  </Step>
+  
+  <Step title="Flag Suspicious Activity">
+    Use the flag system to mark submissions that require further review for academic integrity.
+  </Step>
+</Steps>
+
+## Submission Card Component
+
+Complete example of the grading UI:
+
+```tsx
+// From: apps/nextjs/src/app/teacher/classroom/[id]/assignment/[assignmentId]/page.tsx:42-145
+function SubmissionCard({
+  submission,
+  onSave,
+}: {
+  submission: Doc<"submissions">;
+  onSave: (
+    submissionId: Id<"submissions">,
+    grade: number | null,
+    feedback: string,
+  ) => Promise<void>;
+}) {
+  const [isSaving, setIsSaving] = useState(false);
+  const [grade, setGrade] = useState(submission.grade?.toString() ?? "");
+  const [feedback, setFeedback] = useState(submission.submissionFeedback ?? "");
+  
+  const handleSave = async () => {
+    const nextGrade = grade.trim() === ""
+      ? null
+      : Number.isNaN(Number(grade))
+        ? Number.NaN
+        : Number(grade);
+    
+    if (Number.isNaN(nextGrade)) {
+      toast.error("Grade must be a valid number");
+      return;
+    }
+    
+    setIsSaving(true);
+    try {
+      await onSave(submission._id, nextGrade, feedback);
+      toast.success("Submission updated");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to update submission"
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+  
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{submission.studentId}</CardTitle>
+        <CardDescription>
+          Submitted {new Date(submission.submittedAt).toLocaleString()}
+        </CardDescription>
+        {submission.grade !== undefined && (
+          <div>{submission.grade}</div>
+        )}
+      </CardHeader>
+      <CardContent>
+        <div>
+          <Label htmlFor={`grade-${submission._id}`}>Grade</Label>
+          <Input
+            id={`grade-${submission._id}`}
+            value={grade}
+            onChange={(event) => setGrade(event.target.value)}
+            placeholder="e.g. 95"
+            type="number"
+            step="0.01"
+          />
+        </div>
+        
+        <div>
+          <Label htmlFor={`feedback-${submission._id}`}>Feedback</Label>
+          <textarea
+            id={`feedback-${submission._id}`}
+            rows={4}
+            value={feedback}
+            onChange={(event) => setFeedback(event.target.value)}
+            placeholder="Feedback for the student"
+          />
+        </div>
+        
+        <Button onClick={handleSave} disabled={isSaving}>
+          {isSaving ? "Saving..." : "Save Grade & Feedback"}
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+```

@@ -1,0 +1,132 @@
+---
+title: 'Setting Up the Leopard Extension'
+description: 'Install and configure the Leopard VSCode extension to track your assignment work'
+---
+
+The Leopard VSCode extension automatically tracks your coding activity while you work on assignments. This provides instructors with detailed insights into your work process and helps verify academic integrity.
+
+## Installation
+
+<Steps>
+  <Step title="Install from VSIX">
+    Download the latest `leopard-0.0.1.vsix` file from your instructor or the course platform.
+  </Step>
+
+  <Step title="Open VSCode Extensions">
+    In VSCode, open the Extensions view by clicking the Extensions icon in the Activity Bar or pressing `Ctrl+Shift+X` (Windows/Linux) or `Cmd+Shift+X` (Mac).
+  </Step>
+
+  <Step title="Install from VSIX File">
+    Click the three dots menu (`...`) at the top of the Extensions view and select **Install from VSIX...**
+    
+    Navigate to the downloaded `.vsix` file and select it.
+  </Step>
+
+  <Step title="Reload VSCode">
+    After installation completes, reload VSCode when prompted.
+  </Step>
+</Steps>
+
+## Configuration
+
+The extension requires minimal configuration. The default settings work for most students.
+
+### Convex URL Setting
+
+The extension connects to Leopard's backend through a Convex deployment URL.
+
+<Steps>
+  <Step title="Open Settings">
+    Go to **File > Preferences > Settings** (or press `Ctrl+,` / `Cmd+,`)
+  </Step>
+
+  <Step title="Search for Leopard">
+    In the search bar, type "Leopard" to filter the settings.
+  </Step>
+
+  <Step title="Update Convex URL (if needed)">
+    You should see the setting **Leopard: Convex URL**.
+    
+    The default value is:
+    ```
+    https://optimistic-kangaroo-331.convex.cloud
+    ```
+    
+    <Note>
+      Most students do not need to change this setting. Only update it if your instructor provides a different URL.
+    </Note>
+  </Step>
+</Steps>
+
+## Verifying Installation
+
+After installing the extension, verify it's working correctly:
+
+<Steps>
+  <Step title="Open the Output Panel">
+    Go to **View > Output** or press `Ctrl+Shift+U` (Windows/Linux) / `Cmd+Shift+U` (Mac).
+  </Step>
+
+  <Step title="Select Leopard Event Logger">
+    In the dropdown menu at the top-right of the Output panel, select **Leopard Event Logger**.
+  </Step>
+
+  <Step title="Check for Initialization Messages">
+    You should see messages similar to:
+    ```
+    [INIT] Leopard extension activated
+    [INIT] Convex URL: https://optimistic-kangaroo-331.convex.cloud
+    [INIT] Hostname: your-computer-name
+    ```
+  </Step>
+
+  <Step title="Test by Making Edits">
+    Open any file and make some edits. You should see log messages like:
+    ```
+    [1234567890] Logged an event: DID_CHANGE_TEXT_DOCUMENT
+    [1234567891] SENDING: 1 batched event(s) to Convex...
+    [1234567892] SUCCESS: 1 batched event(s) uploaded to Convex
+    ```
+  </Step>
+</Steps>
+
+<Info>
+  The extension batches events and sends them to the server every second to minimize network overhead.
+</Info>
+
+## Troubleshooting
+
+### Extension Not Activating
+
+If you don't see the initialization messages in the Output panel:
+
+1. Check that the extension is enabled in the Extensions view
+2. Try reloading VSCode (`Ctrl+Shift+P` / `Cmd+Shift+P` → "Reload Window")
+3. Check the VSCode version requirement: `^1.105.0` or higher
+
+### Events Not Uploading
+
+If you see error messages in the Output panel:
+
+```
+[ERROR] Failed to upload batched events - ...
+```
+
+1. Check your internet connection
+2. Verify the Convex URL is correct in settings
+3. Contact your instructor if the problem persists
+
+<Warning>
+  The extension will show a warning notification in VSCode if events fail to upload. Make sure to resolve connection issues before submitting assignments.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Join a Classroom" icon="users" href="/students/joining-classrooms">
+    Enroll in your classes on the Leopard platform
+  </Card>
+  <Card title="Workspace Tracking" icon="chart-line" href="/students/workspace-tracking">
+    Learn what data is tracked while you work
+  </Card>
+</CardGroup>

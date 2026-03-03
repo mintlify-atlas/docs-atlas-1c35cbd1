@@ -1,0 +1,351 @@
+---
+title: Event Tracking
+description: Detailed documentation of workspace events, schemas, and capture mechanisms
+---
+
+## Overview
+
+Leopard's event tracking system captures detailed information about student coding activity in real-time. Events are captured by the VSCode extension, validated using Zod schemas, and stored in the Convex backend.
+
+## Event Types
+
+Currently, Leopard tracks one primary event type, with additional event types planned for future releases.
+
+### DID_CHANGE_TEXT_DOCUMENT
+
+Captured whenever a student makes changes to a text document (code file) in their workspace.
+
+<Info>
+  This is the most critical event type for academic integrity monitoring, as it captures the complete coding timeline and allows instructors to verify that students wrote their own code.
+</Info>
+
+#### When It's Captured
+
+The `onDidChangeTextDocument` VSCode event is triggered when:
+- User types or deletes text
+- User pastes content
+- Code formatting tools make changes
+- Find/replace operations modify files
+- Extensions make programmatic edits
+
+#### Event Schema
+
+```typescript
+{
+  eventType: "DID_CHANGE_TEXT_DOCUMENT",
+  timestamp: number,  // Unix timestamp in milliseconds
+  workspaceId: string,  // Coder workspace UUID
+  metadata: {
+    contentChanges: [
+      {
+        range: {
+          start: { line: number, column: number },
+          end: { line: number, column: number }
+        },
+        text: string,  // The text that was inserted/deleted
+        filePath: string  // Absolute path to the file
+      }
+    ]
+  }
+}
+```
+
+#### Example Event
+
+```json
+{
+  "eventType": "DID_CHANGE_TEXT_DOCUMENT",
+  "timestamp": 1709481234567,
+  "workspaceId": "273044a0-03a7-49ef-b1a4-e1bbc3c49d9b",
+  "metadata": {
+    "contentChanges": [
+      {
+        "range": {
+          "start": { "line": 42, "column": 8 },
+          "end": { "line": 42, "column": 8 }
+        },
+        "text": "console.log('Hello World');",
+        "filePath": "/home/student/project/src/index.ts"
+      }
+    ]
+  }
+}
+```
+
+## Event Validation
+
+All events are validated using Zod schemas defined in `@package/validators`:
+
+```typescript
+import { z } from "zod";
+
+const Event = z.object({
+  timestamp: z.number(),
+  workspaceId: z.string(),
+});
+
+export const DidChangeTextDocument = Event.extend({
+  eventType: z.literal("DID_CHANGE_TEXT_DOCUMENT"),
+  metadata: z.object({
+    contentChanges: z.array(
+      z.object({
+        range: z.object({
+          start: z.object({
+            line: z.number(),
+            column: z.number(),
+          }),
+          end: z.object({
+            line: z.number(),
+            column: z.number(),
+          }),
+        }),
+        text: z.string(),
+        filePath: z.string(),
+      }),
+    ),
+  }),
+});
+```
+
+## Event Capture Implementation
+
+The VSCode extension captures events using the VSCode API:
+
+```typescript
+// From extension.ts
+context.subscriptions.push(
+  vscode.workspace.onDidChangeTextDocument((e) => {
+    // Ignore empty changes
+    if (e.contentChanges.length === 0) {
+      return;
+    }
+
+    // Ignore changes to output channels
+    if (e.document.uri.scheme === "output") {
+      return;
+    }
+
+    // Add event to the batch buffer
+    BatchedConvexHttpClient.getInstance().addEvent({
+      timestamp: Date.now(),
+      eventType: WorkspaceEvents.NAME.DID_CHANGE_TEXT_DOCUMENT,
+      metadata: {
+        contentChanges: e.contentChanges.map((change) => ({
+          range: {
+            start: {
+              line: change.range.start.line,
+              column: change.range.start.character,
+            },
+            end: {
+              line: change.range.end.line,
+              column: change.range.end.character,
+            },
+          },
+          text: change.text,
+          filePath: e.document.uri.fsPath,
+        })),
+      },
+    });
+  }),
+);
+```
+
+## Event Filtering
+
+The extension automatically filters out certain events to reduce noise:
+
+### Ignored Events
+
+- **Output channel changes**: Changes to the VSCode output panel (including Leopard's own logs)
+- **Empty changes**: Events with zero content changes
+
+### URI Schemes Filtered
+
+```typescript
+if (e.document.uri.scheme === "output") {
+  return;  // Don't track output channel changes
+}
+```
+
+## Planned Event Types
+
+The following event types are planned but not yet implemented:
+
+<AccordionGroup>
+  <Accordion title="onDidOpenTextDocument" icon="folder-open">
+    Track when students open files to understand their workflow and navigation patterns.
+    
+    **Status**: Low priority
+  </Accordion>
+  
+  <Accordion title="onDidCloseTextDocument" icon="folder-closed">
+    Track when students close files.
+    
+    **Status**: Low priority
+  </Accordion>
+  
+  <Accordion title="onDidCreateFiles" icon="file-plus">
+    Track file creation to understand project structure evolution.
+    
+    **Status**: Low priority
+  </Accordion>
+  
+  <Accordion title="onDidDeleteFiles" icon="file-minus">
+    Track file deletions.
+    
+    **Status**: Low priority
+  </Accordion>
+  
+  <Accordion title="onDidRenameFiles" icon="file-pen">
+    Track file renames and moves.
+    
+    **Status**: Low priority
+  </Accordion>
+  
+  <Accordion title="onDidSaveTextDocument" icon="floppy-disk">
+    Track explicit save operations to understand checkpointing behavior.
+    
+    **Status**: Low priority
+  </Accordion>
+  
+  <Accordion title="onDidAcceptCopy" icon="copy">
+    Track when students accept clipboard content (copy operations).
+    
+    **Status**: Tracked in [Issue #60](https://github.com/Beanie-Brick-Band/leopard/issues/60)
+  </Accordion>
+  
+  <Accordion title="onDidChangeTextEditorSelection" icon="cursor">
+    Track cursor movements and text selections.
+    
+    **Status**: Low priority
+  </Accordion>
+  
+  <Accordion title="Terminal Events" icon="terminal">
+    Track terminal commands and execution results (`onDidChangeTerminalState`, `onDidEndTerminalShellExecution`).
+    
+    **Status**: Tracked in [Issue #62](https://github.com/Beanie-Brick-Band/leopard/issues/62)
+  </Accordion>
+</AccordionGroup>
+
+## Event Storage
+
+### Database Schema
+
+Events are stored in the Convex `events` table:
+
+```typescript
+events: defineTable({
+  eventType: v.string(),
+  timestamp: v.number(),
+  workspaceId: v.id("workspaces"),
+  metadata: v.record(v.string(), v.any()),
+}).index("workspaceId_timestamp", ["workspaceId", "timestamp"])
+```
+
+### Indexing Strategy
+
+The `workspaceId_timestamp` index enables efficient queries for:
+- Retrieving all events for a specific workspace
+- Getting events in chronological order
+- Filtering events by time range
+- Reconstructing coding timelines
+
+## Event Batching
+
+Events are not sent individually. Instead, they are batched using the `BatchedConvexHttpClient`:
+
+### Batching Configuration
+
+```typescript
+BatchedConvexHttpClient.init(
+  convexClient,
+  hostname,
+  outputChannel,
+  1000  // Debounce delay in milliseconds
+);
+```
+
+### Batch Submission
+
+Events accumulate in a buffer and are submitted when:
+- The debounce delay elapses (1000ms by default)
+- The extension is deactivated (flush on shutdown)
+
+```typescript
+public addEvent(event: Event): void {
+  this.eventBuffer.push(event);
+  
+  if (this.debouncer) {
+    clearTimeout(this.debouncer);
+  }
+  
+  this.debouncer = setTimeout(() => {
+    void this.submitEvents();
+  }, this.debounceDelay);
+}
+```
+
+## Event Lifecycle
+
+<Steps>
+  <Step title="Capture">
+    VSCode extension detects a document change event
+  </Step>
+  
+  <Step title="Filter">
+    Event is checked against filtering rules (output channels, empty changes)
+  </Step>
+  
+  <Step title="Transform">
+    VSCode event data is transformed into Leopard's event schema
+  </Step>
+  
+  <Step title="Buffer">
+    Event is added to the local batch buffer
+  </Step>
+  
+  <Step title="Debounce">
+    Timer is reset to wait for more events (1000ms)
+  </Step>
+  
+  <Step title="Batch Submit">
+    When timer expires, all buffered events are sent to Convex
+  </Step>
+  
+  <Step title="Validation">
+    Backend validates workspace ID and event structure
+  </Step>
+  
+  <Step title="Storage">
+    Events are inserted into the database with workspace association
+  </Step>
+</Steps>
+
+## Debugging Events
+
+The extension provides an output channel for monitoring event capture:
+
+1. Open VSCode Command Palette (Cmd/Ctrl + Shift + P)
+2. Search for "Output: Show Output Channels"
+3. Select "Leopard Event Logger"
+
+You'll see logs like:
+```
+[INIT] Leopard extension activated
+[INIT] Convex URL: https://your-convex-url.convex.cloud
+[INIT] Hostname: coder-273044a0-03a7-49ef-b1a4-e1bbc3c49d9b-7b78cdf4d9-mx66l
+[1709481234567] Logged an event: DID_CHANGE_TEXT_DOCUMENT
+[1709481235678] SENDING: 5 batched event(s) to Convex...
+[1709481235890] SUCCESS: 5 batched event(s) uploaded to Convex
+```
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="How It Works" icon="diagram-project" href="/concepts/how-it-works">
+    Understand the complete architecture and data flow
+  </Card>
+  <Card title="VSCode Extension" icon="code" href="/extension/features">
+    Learn how to install and configure the extension
+  </Card>
+</CardGroup>

@@ -1,0 +1,330 @@
+---
+title: 'Submitting Assignments'
+description: 'View assignments, launch workspaces, and submit your completed work'
+---
+
+Assignments are the core workflow in Leopard. After enrolling in a classroom, you'll launch workspaces to complete your work and submit when you're ready.
+
+## Viewing Assignments
+
+After enrolling in a classroom, click on it from your student dashboard to see all assignments.
+
+### Assignment Cards
+
+Each assignment shows:
+- **Assignment Name**
+- **Due Date and Time** - When the assignment must be submitted
+- **Submission Status** - Whether you've submitted (shows a green "Submitted" badge)
+- **Action Buttons** - Launch Workspace and View Details
+
+```typescript
+// From classroom/[id]/page.tsx:43-113
+function AssignmentCard({
+  assignment,
+  classroomId,
+}: {
+  assignment: {
+    _id: Id<"assignments">;
+    name: string;
+    dueDate: number;
+  };
+  classroomId: Id<"classrooms">;
+}) {
+  const submissionResult = useQuery(
+    api.web.submission.getOwnSubmissionsForAssignment,
+    { assignmentId: assignment._id }
+  );
+  
+  const hasSubmission = submissionResult?.success === true;
+  const dueDate = new Date(assignment.dueDate);
+  
+  // ...
+}
+```
+
+## Assignment Details Page
+
+Click **View Details** on any assignment to see:
+
+- Full assignment description (supports Markdown)
+- Due date and time
+- Submission status
+- Grade and feedback (if graded)
+- Launch Workspace and Submit buttons
+
+<Info>
+  Assignment descriptions support GitHub-flavored Markdown, including code blocks, lists, and formatting.
+</Info>
+
+## Launching a Workspace
+
+Before you can submit an assignment, you need to launch a workspace where your coding activity will be tracked.
+
+<Steps>
+  <Step title="Click Launch Workspace">
+    On the assignment details page or assignment card, click the **Launch Workspace** button.
+    
+    The button will show "Launching..." while the workspace is being created.
+  </Step>
+
+  <Step title="Automatic Redirect">
+    The system will automatically open your new workspace in a new window.
+    
+    This workspace is a cloud-based development environment configured for your assignment.
+  </Step>
+
+  <Step title="Install the Leopard Extension">
+    In your new workspace, install the Leopard VSCode extension following the [setup instructions](/students/setup-extension).
+  </Step>
+
+  <Step title="Start Coding">
+    Begin working on your assignment. All code changes are automatically tracked by the extension.
+  </Step>
+</Steps>
+
+<Warning>
+  You can only have one active workspace per assignment. Once you submit, you cannot relaunch the workspace or make additional changes.
+</Warning>
+
+## Submitting Your Work
+
+When you're ready to submit your completed assignment:
+
+<Steps>
+  <Step title="Return to Assignment Page">
+    Navigate back to the assignment details page on the Leopard platform.
+  </Step>
+
+  <Step title="Verify Workspace Status">
+    Confirm that the page shows your active workspace:
+    
+    ```
+    Submission uses your currently active workspace.
+    ```
+  </Step>
+
+  <Step title="Check the Due Date">
+    Make sure you're submitting before the deadline. The **Submit Assignment** button is disabled if:
+    - No active workspace exists
+    - The due date has passed
+  </Step>
+
+  <Step title="Click Submit Assignment">
+    Click the **Submit Assignment** button. A confirmation dialog will appear:
+    
+    <Warning>
+      "This action is irreversible. You will not be able to submit again or relaunch this workspace after submission."
+    </Warning>
+  </Step>
+
+  <Step title="Confirm Submission">
+    Click **Confirm Submit** in the dialog.
+    
+    The system will:
+    - Link your workspace to the submission
+    - Record the submission timestamp
+    - Lock the workspace (no further changes allowed)
+  </Step>
+</Steps>
+
+## Submission Workflow (Technical Details)
+
+The submission process involves several checks:
+
+```typescript
+// From submission.ts:39-101
+export const submitAssignment = mutation({
+  args: {
+    assignmentId: v.id("assignments"),
+    workspaceId: v.id("workspaces"),
+  },
+  handler: async (ctx, args) => {
+    const user = await checkAuth(ctx);
+    await requireStudentRole(ctx, user._id);
+
+    // Check assignment exists
+    const assignment = await ctx.db.get(args.assignmentId);
+    if (!assignment) {
+      throw new Error("Assignment not found");
+    }
+
+    // Check if user is enrolled in the classroom
+    const relation = await ctx.db
+      .query("classroomStudentsRelations")
+      .withIndex("studentId_classroomId", (q) =>
+        q.eq("studentId", user._id).eq("classroomId", classroomId)
+      )
+      .first();
+
+    if (!relation) {
+      throw new Error("User not enrolled in the classroom");
+    }
+
+    // Due date check
+    const currentTime = Date.now();
+    if (currentTime > assignment.dueDate) {
+      throw new Error("Cannot submit after the due date");
+    }
+
+    // Create or update submission
+    const submissionId = await ctx.db.insert("submissions", {
+      assignmentId: args.assignmentId,
+      flags: [],
+      studentId: user._id,
+      workspaceId: args.workspaceId,
+      submittedAt: Date.now(),
+      gradesReleased: false,
+    });
+
+    return { submissionId };
+  },
+});
+```
+
+### Validation Checks
+
+The system validates:
+1. User is authenticated
+2. User has student role
+3. Assignment exists
+4. User is enrolled in the classroom
+5. Submission is before the due date
+6. User hasn't already submitted (or allows re-submission)
+
+## Viewing Submission Status
+
+After submitting, you'll see:
+
+### Submitted Status
+
+- A green **Submitted** badge on the assignment card
+- Submission timestamp on the assignment details page
+- Message: "Submitted on [date]. Grading is pending."
+
+### Waiting for Grades
+
+Your submission is initially in a "pending" state:
+
+```typescript
+// From submission.ts:147-180
+export const getOwnSubmissionsForAssignment = query({
+  handler: async (ctx, args) => {
+    const submission = await ctx.db
+      .query("submissions")
+      .withIndex("studentId_assignmentId", q =>
+        q.eq("studentId", user._id).eq("assignmentId", args.assignmentId)
+      )
+      .first();
+
+    if (submission.gradesReleased) {
+      return { success: true, submission: submission };
+    }
+
+    // Return limited info if grades not released
+    const publicSubmissionInfo = {
+      _id: submission._id,
+      workspaceId: submission.workspaceId,
+      studentId: submission.studentId,
+      assignmentId: submission.assignmentId,
+      submittedAt: submission.submittedAt,
+      gradesReleased: submission.gradesReleased,
+    };
+
+    return { success: true, submission: publicSubmissionInfo };
+  },
+});
+```
+
+<Info>
+  You can only see limited submission information until your instructor releases grades. This prevents you from seeing your grade before the instructor is ready.
+</Info>
+
+## Viewing Grades and Feedback
+
+Once your instructor grades your submission and releases grades:
+
+### Grade Display
+
+You'll see a green card showing:
+- **Your Grade** - Large numeric score
+- **Graded On** - Timestamp of when it was graded
+- **Feedback** - Written comments from the instructor
+
+```typescript
+// From assignment/[assignmentId]/page.tsx:178-201
+{grade !== undefined ? (
+  <Card className="border-green-500/50">
+    <CardHeader>
+      <CardTitle>Your Grade</CardTitle>
+      <CardDescription>
+        {gradedAt
+          ? `Graded on ${new Date(gradedAt).toLocaleString()}`
+          : null}
+      </CardDescription>
+    </CardHeader>
+    <CardContent className="space-y-3">
+      <p className="text-4xl font-bold text-green-600">
+        {grade}
+      </p>
+      {feedback ? (
+        <div>
+          <p className="text-sm font-medium">Feedback</p>
+          <p className="text-muted-foreground text-sm whitespace-pre-wrap">
+            {feedback}
+          </p>
+        </div>
+      ) : null}
+    </CardContent>
+  </Card>
+) : null}
+```
+
+## Late Submissions
+
+<Warning>
+  You cannot submit an assignment after the due date has passed. The system performs a strict timestamp check.
+</Warning>
+
+If you attempt to submit late:
+
+```
+Error: Cannot submit after the due date
+```
+
+Contact your instructor if you need an extension or have extenuating circumstances.
+
+## Common Issues
+
+### No Active Workspace
+
+If you see "Launch a workspace before submitting":
+- You haven't launched a workspace yet
+- Your workspace expired or was deleted
+- Click **Launch Workspace** to create a new one
+
+### Submit Button Disabled
+
+The submit button is disabled when:
+1. **No active workspace** - Launch a workspace first
+2. **Past due date** - Assignment deadline has passed
+3. **Already submitted** - You've already submitted (unless re-submissions are allowed)
+4. **Not enrolled** - You're not enrolled in the classroom
+
+### Submission Failed
+
+If submission fails:
+1. Check your internet connection
+2. Verify you're still enrolled in the classroom
+3. Ensure you haven't exceeded the due date
+4. Try refreshing the page and submitting again
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Workspace Tracking" icon="chart-line" href="/students/workspace-tracking">
+    Learn what data is tracked in your workspace
+  </Card>
+  <Card title="Setup Extension" icon="puzzle-piece" href="/students/setup-extension">
+    Review extension installation steps
+  </Card>
+</CardGroup>

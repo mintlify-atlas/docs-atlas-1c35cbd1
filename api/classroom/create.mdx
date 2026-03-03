@@ -1,0 +1,303 @@
+---
+title: Create & Manage Classrooms
+description: Create, update, and delete classrooms
+---
+
+## Create Classroom
+
+Create a new classroom. Only teachers and admins can create classrooms.
+
+<CodeGroup>
+```typescript Mutation
+import { api } from "./_generated/api";
+import { useMutation } from "convex/react";
+
+const createClassroom = useMutation(api.web.teacher.createClassroom);
+const classroomId = await createClassroom({
+  className: "Introduction to Algorithms",
+  metadata: JSON.stringify({ semester: "Fall 2024", room: "CS-101" }),
+  assistantIds: ["user_ta1", "user_ta2"]
+});
+```
+
+```typescript Response
+"classroom_abc123def456" // The new classroom ID
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/teacher.ts:126
+export const createClassroom = mutation({
+  args: {
+    className: v.string(),
+    metadata: v.optional(v.string()),
+    assistantIds: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+    await requireTeacherOrAdmin(ctx, user._id);
+
+    const assistantIds = (args.assistantIds ?? []).filter((id) => id !== user._id);
+
+    return ctx.db.insert("classrooms", {
+      className: args.className,
+      metadata: args.metadata ?? "{}",
+      ownerId: user._id,
+      assistantIds,
+      assignments: [],
+    });
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="className" type="string" required>
+  The name of the classroom (e.g., "Data Structures & Algorithms")
+</ParamField>
+
+<ParamField path="metadata" type="string" optional>
+  JSON string containing additional classroom metadata. Defaults to "{}".
+  
+  Example:
+  ```json
+  {
+    "semester": "Spring 2024",
+    "room": "CS-101",
+    "schedule": "MWF 10:00-11:00"
+  }
+  ```
+</ParamField>
+
+<ParamField path="assistantIds" type="string[]" optional>
+  Array of user IDs for teaching assistants. The creating user is automatically excluded.
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be authenticated as a teacher or admin
+</ParamField>
+
+### Return Type
+
+<ResponseField name="classroomId" type="Id<'classrooms'>">
+  The ID of the newly created classroom
+</ResponseField>
+
+### Errors
+
+<ResponseField name="Not authenticated" type="error">
+  User is not authenticated
+</ResponseField>
+
+<ResponseField name="Only teachers can access this endpoint" type="error">
+  User does not have teacher or admin role
+</ResponseField>
+
+---
+
+## Update Classroom
+
+Update an existing classroom's information.
+
+<CodeGroup>
+```typescript Mutation
+import { api } from "./_generated/api";
+import { useMutation } from "convex/react";
+
+const updateClassroom = useMutation(api.web.teacher.updateClassroom);
+await updateClassroom({
+  classroomId: "classroom_123",
+  className: "Advanced Algorithms",
+  assistantIds: ["user_ta1", "user_ta2", "user_ta3"]
+});
+```
+
+```typescript Response
+// Returns void on success
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/teacher.ts:148
+export const updateClassroom = mutation({
+  args: {
+    classroomId: v.id("classrooms"),
+    className: v.optional(v.string()),
+    metadata: v.optional(v.string()),
+    assistantIds: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+    await requireInstructorAccess(ctx, args.classroomId, user._id);
+
+    const patch: {
+      className?: string;
+      metadata?: string;
+      assistantIds?: string[];
+    } = {};
+
+    if (args.className !== undefined) patch.className = args.className;
+    if (args.metadata !== undefined) patch.metadata = args.metadata;
+    if (args.assistantIds !== undefined) {
+      patch.assistantIds = args.assistantIds.filter((id) => id !== user._id);
+    }
+
+    await ctx.db.patch(args.classroomId, patch);
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="classroomId" type="Id<'classrooms'>" required>
+  The ID of the classroom to update
+</ParamField>
+
+<ParamField path="className" type="string" optional>
+  New name for the classroom
+</ParamField>
+
+<ParamField path="metadata" type="string" optional>
+  New metadata JSON string
+</ParamField>
+
+<ParamField path="assistantIds" type="string[]" optional>
+  New array of teaching assistant user IDs
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be an instructor (owner or assistant) for the classroom, or an admin
+</ParamField>
+
+### Behavior
+
+- Only provided fields are updated
+- The current user is automatically excluded from assistantIds
+- Empty update (no fields provided) is allowed and does nothing
+
+### Errors
+
+<ResponseField name="Classroom not found" type="error">
+  The specified classroom ID does not exist
+</ResponseField>
+
+<ResponseField name="Not authorized for this classroom" type="error">
+  User does not have permission to modify this classroom
+</ResponseField>
+
+---
+
+## Delete Classroom
+
+Permanently delete a classroom and all its associated data.
+
+<Warning>
+  This operation is irreversible and will delete:
+  - The classroom
+  - All student enrollments
+  - All assignments in the classroom
+  - All submissions for those assignments
+  - All flags on those submissions
+</Warning>
+
+<CodeGroup>
+```typescript Mutation
+import { api } from "./_generated/api";
+import { useMutation } from "convex/react";
+
+const deleteClassroom = useMutation(api.web.teacher.deleteClassroom);
+await deleteClassroom({
+  classroomId: "classroom_123"
+});
+```
+
+```typescript Response
+// Returns void on success
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/teacher.ts:175
+export const deleteClassroom = mutation({
+  args: {
+    classroomId: v.id("classrooms"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+    const classroom = await requireClassroomOwnerOrAdmin(ctx, args.classroomId, user._id);
+
+    // Delete enrollments
+    const relations = await ctx.db
+      .query("classroomStudentsRelations")
+      .withIndex("classroomId_studentId", (q) => q.eq("classroomId", args.classroomId))
+      .collect();
+
+    for (const relation of relations) {
+      await ctx.db.delete(relation._id);
+    }
+
+    // Delete assignments + submissions + flags
+    for (const assignmentId of classroom.assignments) {
+      const submissions = await ctx.db
+        .query("submissions")
+        .withIndex("assignmentId_studentId", (q) => q.eq("assignmentId", assignmentId))
+        .collect();
+
+      for (const submission of submissions) {
+        for (const flagId of submission.flags) {
+          const flag = await ctx.db.get(flagId);
+          if (flag) {
+            await ctx.db.delete(flag._id);
+          }
+        }
+        await ctx.db.delete(submission._id);
+      }
+
+      const assignment = await ctx.db.get(assignmentId);
+      if (assignment) {
+        await ctx.db.delete(assignment._id);
+      }
+    }
+
+    await ctx.db.delete(args.classroomId);
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="classroomId" type="Id<'classrooms'>" required>
+  The ID of the classroom to delete
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be the classroom owner or an admin
+</ParamField>
+
+### Cascade Deletion
+
+The following data is automatically deleted:
+
+1. **Enrollment relations** - All student enrollments in the classroom
+2. **Assignments** - All assignments belonging to the classroom
+3. **Submissions** - All student submissions for those assignments
+4. **Flags** - All academic integrity flags on those submissions
+
+### Errors
+
+<ResponseField name="Classroom not found" type="error">
+  The specified classroom ID does not exist
+</ResponseField>
+
+<ResponseField name="Only classroom owners can perform this action" type="error">
+  User is not the owner or an admin
+</ResponseField>

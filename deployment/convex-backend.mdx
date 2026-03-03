@@ -1,0 +1,336 @@
+---
+title: Convex backend deployment
+description: Deploy the Leopard Convex backend to production
+---
+
+The Convex backend handles all server-side logic, database operations, and real-time data synchronization for Leopard.
+
+## What is Convex?
+
+[Convex](https://convex.dev) is a serverless backend platform that provides:
+
+- **Real-time database** with automatic subscriptions
+- **TypeScript-first** with end-to-end type safety
+- **Serverless functions** (queries, mutations, actions)
+- **Automatic scaling** and deployment
+- **Built-in authentication** integration
+
+## Project structure
+
+The Convex backend lives in `packages/backend/convex/`:
+
+```text
+packages/backend/convex/
+├── schema.ts              # Database schema
+├── auth.ts                # Better Auth integration
+├── auth.config.ts         # Auth configuration
+├── http.ts                # HTTP endpoints
+├── convex.config.ts       # Convex configuration
+├── helpers/
+│   └── roles.ts           # Role-based access control
+├── web/                   # Web app endpoints
+│   ├── classroom.ts       # Classroom queries/mutations
+│   ├── assignment.ts      # Assignment management
+│   ├── replay.ts          # Event replay system
+│   └── index.ts           # Exported API surface
+└── api/                   # Extension/external endpoints
+    ├── extension.ts       # VSCode extension API
+    └── coder.ts          # Coder workspace integration
+```
+
+## Development deployment
+
+<Steps>
+  <Step title="Install Convex CLI">
+    The CLI is included in the monorepo dependencies:
+    ```bash
+    # Already installed via pnpm install
+    npx convex --version
+    ```
+  </Step>
+  
+  <Step title="Login to Convex">
+    Authenticate with your Convex account:
+    ```bash
+    npx convex login
+    ```
+    
+    This opens your browser for authentication.
+  </Step>
+  
+  <Step title="Initialize Convex project">
+    Create a new Convex project (first time only):
+    ```bash
+    cd packages/backend
+    npx convex dev --once
+    ```
+    
+    Choose:
+    - **Create a new project** or select an existing one
+    - **Project name** (e.g., "leopard-dev")
+    - **Team** (your personal team or organization)
+  </Step>
+  
+  <Step title="Start development mode">
+    Run Convex in watch mode:
+    ```bash
+    pnpm --filter @package/backend dev
+    ```
+    
+    Or from the monorepo root:
+    ```bash
+    pnpm dev
+    ```
+    
+    This starts:
+    - Convex function watcher (auto-deploys on file changes)
+    - Next.js dev server
+    - VSCode extension debugger
+  </Step>
+</Steps>
+
+<Note>
+  The `pnpm dev` command in the root uses Turborepo to run all development servers in parallel with proper dependency ordering.
+</Note>
+
+## Production deployment
+
+<Steps>
+  <Step title="Create production project">
+    Set up a separate Convex project for production:
+    ```bash
+    cd packages/backend
+    npx convex deploy --prod
+    ```
+    
+    This prompts you to create a new project or select an existing production project.
+  </Step>
+  
+  <Step title="Configure environment variables">
+    Set production environment variables in the Convex dashboard:
+    
+    1. Go to [dashboard.convex.dev](https://dashboard.convex.dev)
+    2. Select your production project
+    3. Navigate to **Settings** → **Environment Variables**
+    4. Add:
+       - `BETTER_AUTH_SECRET` - Secure random string
+       - `SITE_URL` - Your production Next.js URL
+       - `CODER_URL` - Your Coder instance URL
+    
+    <Warning>
+      Use different secrets for production than development. Generate secure values with `openssl rand -base64 32`.
+    </Warning>
+  </Step>
+  
+  <Step title="Deploy functions">
+    Push your backend code to production:
+    ```bash
+    npx convex deploy --prod
+    ```
+    
+    This:
+    - Bundles your TypeScript functions
+    - Validates your schema
+    - Deploys to Convex's global infrastructure
+    - Runs any schema migrations
+  </Step>
+  
+  <Step title="Verify deployment">
+    Check the Convex dashboard to confirm:
+    - All functions are listed
+    - Schema tables are created
+    - No deployment errors
+    
+    Test a function:
+    ```bash
+    npx convex run web:classroom:getMyClassrooms --prod
+    ```
+  </Step>
+</Steps>
+
+## Continuous deployment
+
+For automated deployments from CI/CD:
+
+<Steps>
+  <Step title="Generate deploy key">
+    Create a deploy key in the Convex dashboard:
+    
+    1. Go to **Settings** → **Deploy Keys**
+    2. Click **Generate Deploy Key**
+    3. Copy the key (starts with `prod:...`)
+  </Step>
+  
+  <Step title="Add to CI secrets">
+    Store the deploy key as a secret in your CI system (e.g., GitHub Actions):
+    
+    ```yaml .github/workflows/deploy.yml
+    name: Deploy to Convex
+    on:
+      push:
+        branches: [main]
+    
+    jobs:
+      deploy:
+        runs-on: ubuntu-latest
+        steps:
+          - uses: actions/checkout@v4
+          - uses: pnpm/action-setup@v2
+          - uses: actions/setup-node@v4
+          
+          - name: Install dependencies
+            run: pnpm install
+          
+          - name: Deploy to Convex
+            run: npx convex deploy --cmd 'pnpm build'
+            env:
+              CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+    ```
+  </Step>
+</Steps>
+
+## Function types
+
+Convex provides three types of serverless functions:
+
+### Queries (read-only)
+
+Queries read data and are automatically cached and reactive:
+
+```typescript convex/web/classroom.ts
+export const getEnrolled = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+    if (!user) return [];
+    
+    return await getManyVia(
+      ctx.db,
+      "classroomStudentsRelations",
+      "classroomId",
+      "studentId_classroomId",
+      user._id,
+      "studentId",
+    );
+  },
+});
+```
+
+### Mutations (write operations)
+
+Mutations modify data and trigger reactive updates:
+
+```typescript convex/web/classroom.ts
+export const createClassroom = mutation({
+  args: {
+    className: v.string(),
+    metadata: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await authComponent.getAuthUser(ctx);
+    await requireTeacherRole(ctx, user._id);
+    
+    return await ctx.db.insert("classrooms", {
+      className: args.className,
+      metadata: args.metadata,
+      ownerId: user._id,
+      assistantIds: [],
+      assignments: [],
+    });
+  },
+});
+```
+
+### Actions (external APIs)
+
+Actions can call external APIs and are not transactional:
+
+```typescript convex/api/coder.ts
+export const createWorkspace = action({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    // Call Coder API
+    const response = await fetch(`${process.env.CODER_URL}/api/v2/workspaces`, {
+      method: 'POST',
+      // ... workspace creation logic
+    });
+    
+    return await response.json();
+  },
+});
+```
+
+## Better Auth integration
+
+Leopard uses the `@convex-dev/better-auth` component for authentication:
+
+```typescript convex/auth.ts
+import { BetterAuth } from "@convex-dev/better-auth/server";
+import { authConfig } from "./auth.config";
+
+export const authComponent = new BetterAuth(authConfig);
+```
+
+The component provides:
+- `authComponent.getAuthUser(ctx)` - Get authenticated user or throw
+- `authComponent.safeGetAuthUser(ctx)` - Get authenticated user or return null
+
+See: [Authentication API](/api/auth/overview)
+
+## Environment variables
+
+Access environment variables in Convex functions:
+
+```typescript
+const coderUrl = process.env.CODER_URL;
+const siteUrl = process.env.SITE_URL;
+```
+
+<Info>
+  Environment variables are type-checked using `@t3-oss/env-core` in `convex/env.ts`.
+</Info>
+
+## Monitoring and logs
+
+View logs and metrics in the Convex dashboard:
+
+1. **Logs tab** - Function execution logs, errors, console.log output
+2. **Metrics tab** - Request counts, latency, error rates
+3. **Data tab** - Browse tables and documents
+
+## Common issues
+
+### Schema validation errors
+
+If deployment fails due to schema issues:
+
+1. Check the error message in the CLI output
+2. Ensure all field types match the schema definition
+3. Run `npx convex dev` locally to test schema changes
+
+### Function not found errors
+
+If the Next.js app can't find a function:
+
+1. Verify the function is exported in the correct file
+2. Check that `convex dev` or `convex deploy` completed successfully
+3. Ensure `NEXT_PUBLIC_CONVEX_URL` matches your deployment URL
+
+### Authentication errors
+
+If Better Auth integration fails:
+
+1. Verify `BETTER_AUTH_SECRET` is set in Convex environment variables
+2. Ensure the secret matches between Next.js and Convex
+3. Check that `SITE_URL` is correct for your environment
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Next.js deployment" icon="rocket" href="/deployment/nextjs-deployment">
+    Deploy the web application
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth/overview">
+    Explore available endpoints
+  </Card>
+</CardGroup>

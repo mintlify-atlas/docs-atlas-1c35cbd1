@@ -1,0 +1,266 @@
+---
+title: List Assignments
+description: Retrieve assignments by classroom or ID
+---
+
+## Get Assignment by ID
+
+Retrieve a single assignment by its ID. Access is granted based on user role and enrollment.
+
+<CodeGroup>
+```typescript Query
+import { api } from "./_generated/api";
+import { useQuery } from "convex/react";
+
+const assignment = useQuery(api.web.assignment.getById, {
+  id: "assignment_123"
+});
+```
+
+```typescript Response
+{
+  _id: "assignment_123",
+  _creationTime: 1704067200000,
+  name: "Binary Search Trees",
+  classroomId: "classroom_123",
+  dueDate: 1735689600000,
+  releaseDate: 1704067200000,
+  description: "Implement a BST with insert, delete, and search operations",
+  workspaceConfig: {
+    "template": "python-basic",
+    "starterFiles": ["bst.py", "test_bst.py"]
+  }
+}
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/assignment.ts:71
+export const getById = query({
+  args: { id: v.id("assignments") },
+  handler: async (ctx, args) => {
+    const auth = await authComponent.safeGetAuthUser(ctx);
+    if (!auth) {
+      throw new Error("Unauthorized");
+    }
+    return ensureCanAccessAssignment(ctx, auth._id, args.id);
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="id" type="Id<'assignments'>" required>
+  The assignment ID to retrieve
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be authenticated. Access granted if:
+  - User is the classroom owner or assistant
+  - User is a student enrolled in the classroom
+</ParamField>
+
+### Return Type
+
+<ResponseField name="assignment" type="object">
+  The assignment object
+  
+  <Expandable title="fields">
+    <ResponseField name="_id" type="Id<'assignments'>">
+      Unique assignment identifier
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      Name of the assignment
+    </ResponseField>
+    <ResponseField name="classroomId" type="Id<'classrooms'>">
+      The classroom this assignment belongs to
+    </ResponseField>
+    <ResponseField name="dueDate" type="number">
+      Unix timestamp (milliseconds) when assignment is due
+    </ResponseField>
+    <ResponseField name="releaseDate" type="number">
+      Unix timestamp (milliseconds) when assignment becomes available
+    </ResponseField>
+    <ResponseField name="description" type="string | undefined">
+      Optional markdown description of the assignment requirements
+    </ResponseField>
+    <ResponseField name="workspaceConfig" type="Record<string, any> | undefined">
+      Optional configuration for the coding workspace (templates, files, etc.)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Errors
+
+<ResponseField name="Unauthorized" type="error">
+  User is not authenticated
+</ResponseField>
+
+<ResponseField name="Assignment not found" type="error">
+  Assignment ID does not exist
+</ResponseField>
+
+<ResponseField name="Not authorized to view this assignment" type="error">
+  User is not enrolled in the classroom or is not an instructor
+</ResponseField>
+
+---
+
+## Get Assignments by IDs
+
+Retrieve multiple assignments by their IDs in a single query.
+
+<CodeGroup>
+```typescript Query
+import { api } from "./_generated/api";
+import { useQuery } from "convex/react";
+
+const assignments = useQuery(api.web.assignment.getByIds, {
+  ids: ["assignment_1", "assignment_2", "assignment_3"]
+});
+```
+
+```typescript Response
+[
+  {
+    _id: "assignment_1",
+    name: "Binary Search Trees",
+    classroomId: "classroom_123",
+    dueDate: 1735689600000,
+    releaseDate: 1704067200000
+  },
+  {
+    _id: "assignment_2",
+    name: "Graph Algorithms",
+    classroomId: "classroom_123",
+    dueDate: 1738368000000,
+    releaseDate: 1706745600000
+  }
+]
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/assignment.ts:82
+export const getByIds = query({
+  args: { ids: v.array(v.id("assignments")) },
+  handler: async (ctx, args) => {
+    const auth = await authComponent.safeGetAuthUser(ctx);
+    if (!auth) {
+      throw new Error("Unauthorized");
+    }
+
+    return Promise.all(
+      args.ids.map((id) => ensureCanAccessAssignment(ctx, auth._id, id)),
+    );
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="ids" type="Id<'assignments'>[]" required>
+  Array of assignment IDs to retrieve
+</ParamField>
+
+### Authentication
+
+Same as [Get Assignment by ID](#authentication)
+
+### Return Type
+
+Array of assignment objects. See [Get Assignment by ID](#return-type) for field descriptions.
+
+---
+
+## Get Assignments by Classroom
+
+Retrieve all assignments belonging to a specific classroom.
+
+<CodeGroup>
+```typescript Query
+import { api } from "./_generated/api";
+import { useQuery } from "convex/react";
+
+const assignments = useQuery(api.web.teacherAssignments.getAssignmentsByClassroom, {
+  classroomId: "classroom_123"
+});
+```
+
+```typescript Response
+[
+  {
+    _id: "assignment_1",
+    name: "Binary Search Trees",
+    classroomId: "classroom_123",
+    dueDate: 1735689600000,
+    releaseDate: 1704067200000,
+    description: "Implement BST operations"
+  },
+  {
+    _id: "assignment_2",
+    name: "Graph Algorithms",
+    classroomId: "classroom_123",
+    dueDate: 1738368000000,
+    releaseDate: 1706745600000
+  }
+]
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/teacherAssignments.ts:68
+export const getAssignmentsByClassroom = query({
+  args: {
+    classroomId: v.id("classrooms"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+    const classroom = await requireAccessToClassroomAssignments(
+      ctx,
+      args.classroomId,
+      user._id,
+    );
+
+    const assignments = (
+      await Promise.all(classroom.assignments.map((id) => ctx.db.get(id)))
+    ).filter((a): a is NonNullable<typeof a> => a !== null);
+
+    return assignments;
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="classroomId" type="Id<'classrooms'>" required>
+  The classroom ID to retrieve assignments for
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be authenticated. Access granted if:
+  - User is a student enrolled in the classroom
+  - User is an instructor (owner or assistant) for the classroom
+  - User is an admin
+</ParamField>
+
+### Return Type
+
+Array of assignment objects. See [Get Assignment by ID](#return-type) for field descriptions.
+
+### Errors
+
+<ResponseField name="Classroom not found" type="error">
+  Classroom ID does not exist
+</ResponseField>
+
+<ResponseField name="Not authorized to view classroom assignments" type="error">
+  User is not enrolled, not an instructor, and not an admin
+</ResponseField>

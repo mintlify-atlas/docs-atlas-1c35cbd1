@@ -1,0 +1,159 @@
+---
+title: 'Joining Classrooms'
+description: 'Browse and enroll in available classrooms to access assignments'
+---
+
+Classrooms in Leopard are where instructors organize assignments and track student submissions. You'll need to enroll in a classroom before you can access its assignments.
+
+## Accessing the Student Dashboard
+
+Navigate to the student dashboard at `/student` after signing in. This is your home page for viewing all enrolled and available classrooms.
+
+## Browsing Available Classrooms
+
+When you first access the student dashboard, you'll see two sections:
+
+1. **Enrolled Classes** - Classes you've already joined
+2. **Available Classes** - Classes you can enroll in
+
+<Info>
+  The platform automatically shows you all classrooms created by instructors. There are no join codes or special links required.
+</Info>
+
+### Classroom Information
+
+Each classroom card displays:
+- **Class Name** - The name set by the instructor
+- **Description** - A brief summary of the course (if provided)
+- **Assignment Count** - Number of assignments (for enrolled classes)
+
+## Enrolling in a Classroom
+
+<Steps>
+  <Step title="Find the Classroom">
+    Browse the **Available Classes** section on your student dashboard.
+  </Step>
+
+  <Step title="View Classroom Details">
+    Click the **View Class** button on any classroom card to see more information.
+  </Step>
+
+  <Step title="Click Enroll">
+    On the classroom detail page, click the **Enroll** button in the top-right corner.
+  </Step>
+
+  <Step title="Confirmation">
+    You'll see a success message, and the classroom will immediately move to your **Enrolled Classes** section.
+  </Step>
+</Steps>
+
+<Note>
+  Enrollment is instant. Once you click **Enroll**, you'll have immediate access to all assignments in that classroom.
+</Note>
+
+## How Enrollment Works (Technical Details)
+
+When you enroll in a classroom, the system:
+
+1. Verifies you have a student role
+2. Checks you're not already enrolled
+3. Creates a relationship record linking you to the classroom
+
+```typescript
+// From classroom.ts:79-110
+export const enroll = mutation({
+  args: {
+    classroomId: v.id("classrooms"),
+  },
+  handler: async (ctx, args) => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+    
+    // Check if already enrolled
+    const existingRelation = await ctx.db
+      .query("classroomStudentsRelations")
+      .withIndex("studentId_classroomId", (q) =>
+        q.eq("studentId", user._id).eq("classroomId", args.classroomId)
+      )
+      .first();
+
+    if (existingRelation) {
+      throw new Error("Already enrolled in this classroom");
+    }
+
+    // Create enrollment relation
+    await ctx.db.insert("classroomStudentsRelations", {
+      classroomId: args.classroomId,
+      studentId: user._id,
+    });
+  },
+});
+```
+
+## Viewing Enrolled Classrooms
+
+After enrolling, your **Enrolled Classes** section shows:
+
+- All classrooms you've joined
+- Number of assignments in each classroom
+- Quick links to open each classroom
+
+<Info>
+  The system queries your enrollments using the `getEnrolled` API, which returns all classrooms where you have an active student relationship.
+</Info>
+
+### Opening a Classroom
+
+Click on any enrolled classroom card to:
+- View all assignments in that classroom
+- See assignment due dates and submission status
+- Launch workspaces for assignments
+- Submit completed work
+
+## Common Enrollment Scenarios
+
+### Already Enrolled Error
+
+If you try to enroll in a classroom you're already a member of:
+
+<Warning>
+  You'll see an error: "Already enrolled in this classroom"
+  
+  This is expected behavior. Navigate back to your dashboard to access the classroom from **Enrolled Classes**.
+</Warning>
+
+### Empty Classrooms
+
+If no classrooms appear in **Available Classes**:
+- Your instructor hasn't created any classrooms yet
+- You're already enrolled in all available classrooms
+- Check with your instructor about classroom availability
+
+### No Assignments
+
+After enrolling, if a classroom shows "No assignments in this class yet":
+- The instructor hasn't created any assignments
+- Check back later or contact your instructor
+
+## Filtering and Organization
+
+The student dashboard automatically organizes classrooms:
+
+```typescript
+// From page.tsx:42-76
+const availableClassrooms = allClassrooms.filter(
+  (classroom) => !enrolledClassroomIds.includes(classroom._id)
+);
+```
+
+Enrolled classrooms are filtered out of the available list to avoid confusion.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="View Assignments" icon="clipboard-list" href="/students/submitting-assignments">
+    Learn how to submit assignments
+  </Card>
+  <Card title="Launch Workspaces" icon="code" href="/students/workspace-tracking">
+    Understand workspace tracking
+  </Card>
+</CardGroup>

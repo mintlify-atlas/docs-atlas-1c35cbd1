@@ -1,0 +1,451 @@
+---
+title: Reviewing Student History
+description: Learn how to review student workspace events and detect suspicious patterns
+---
+
+Leopard's academic integrity features center around tracking and replaying student workspace activity. Every action students take in their workspace is logged and can be reviewed by instructors.
+
+## Event Tracking System
+
+Workspace events are automatically captured and stored:
+
+```typescript
+// From: packages/backend/convex/schema.ts:26-31
+events: {
+  eventType: string,
+  timestamp: number,
+  workspaceId: Id<"workspaces">,
+  metadata: Record<string, any>
+}
+
+// Indexed by: workspaceId_timestamp
+```
+
+### Event Types
+
+The system tracks various workspace events:
+
+```typescript
+// From: packages/backend/convex/web/replay.ts:3
+import * as WorkspaceEvents from "@package/validators/workspaceEvents";
+
+// Common event types:
+- DidChangeTextDocument  // File edits
+- FileCreate             // New files
+- FileDelete             // Deleted files
+- FileRename             // Renamed files
+- TerminalCommand        // Shell commands
+- DebugSession           // Debugging activity
+- GitCommit              // Version control
+```
+
+Each event contains:
+- **eventType**: The type of action
+- **timestamp**: Unix timestamp in milliseconds
+- **workspaceId**: Associated workspace
+- **metadata**: Event-specific details (file path, content changes, command, etc.)
+
+## Viewing Event History
+
+### Get All Replays
+
+Retrieve events grouped by workspace:
+
+```typescript
+// From: packages/backend/convex/web/replay.ts:8-39
+const replays = await getReplays();
+
+// Returns events bucketed by workspaceId:
+{
+  "workspace_id_1": [
+    {
+      eventType: "DidChangeTextDocument",
+      timestamp: 1709251234567,
+      filePath: "main.py",
+      changes: [/* ... */]
+    },
+    // ... more events sorted by timestamp
+  ],
+  "workspace_id_2": [ /* ... */ ]
+}
+
+// Events are automatically sorted chronologically:
+eventsByWorkspaceId[workspaceId].sort((a, b) => a.timestamp - b.timestamp);
+```
+
+### Get Single Workspace Replay
+
+Fetch the complete history for one workspace:
+
+```typescript
+// From: packages/backend/convex/web/replay.ts:41-62
+const events = await getReplay({
+  workspaceId: "workspace_id"
+});
+
+// Returns chronological array of events:
+[
+  {
+    _id: "event_id_1",
+    eventType: "DidChangeTextDocument",
+    timestamp: 1709251234567,
+    workspaceId: "workspace_id",
+    metadata: {
+      filePath: "main.py",
+      changes: [
+        {
+          range: { start: { line: 10, character: 0 }, end: { line: 10, character: 5 } },
+          text: "print('Hello')"
+        }
+      ]
+    },
+    _creationTime: 1709251234567
+  },
+  // ... more events in ascending order
+]
+```
+
+## Timeline Replay Feature
+
+The replay system allows instructors to "play back" student work:
+
+<Steps>
+  <Step title="Access Submission">
+    Navigate to the student's submission from the assignment detail page.
+  </Step>
+  
+  <Step title="Open Replay View">
+    Click "View History" or "Replay" to see the timeline.
+  </Step>
+  
+  <Step title="Navigate Timeline">
+    Use timeline controls to:
+    - Jump to specific timestamps
+    - Play events automatically
+    - Pause and step through individual changes
+    - See file states at any point in time
+  </Step>
+  
+  <Step title="Identify Patterns">
+    Look for:
+    - Large code blocks appearing suddenly
+    - Suspicious copy-paste patterns
+    - Irregular work timing
+    - External file imports
+  </Step>
+</Steps>
+
+## Flag System for Suspicious Activity
+
+Mark submissions that require further review:
+
+```typescript
+// From: packages/backend/convex/schema.ts:32-36
+flags: {
+  description: string,
+  timestamp: number,
+  type: string
+}
+
+// Flags are referenced in submissions:
+submissions: {
+  // ...
+  flags: Id<"flags">[]
+}
+```
+
+### Creating a Flag
+
+Add a flag to a submission:
+
+```typescript
+// From: packages/backend/convex/web/teacherAssignments.ts:265-294
+await createFlag({
+  submissionId: "submission_id",
+  type: "suspicious_paste",
+  description: "Large code block appeared at 2:34 AM without incremental development"
+});
+
+// Creates flag and adds to submission:
+{
+  type: "suspicious_paste",
+  description: "Large code block appeared...",
+  timestamp: Date.now()
+}
+
+// Updates submission.flags array:
+submission.flags = [...submission.flags, flagId];
+```
+
+### Common Flag Types
+
+```typescript
+// Suggested flag types:
+type FlagType = 
+  | "suspicious_paste"       // Large blocks of code appearing suddenly
+  | "unusual_timing"         // Activity at unusual hours
+  | "rapid_completion"       // Work completed too quickly
+  | "external_source"        // Evidence of external code sources
+  | "identical_code"         // Code identical to another student
+  | "version_control_bypass" // Git history manipulation
+  | "ai_generated"           // Suspected AI-generated code
+  | "manual_review"          // Requires manual inspection
+  | "other";                 // Custom reason
+```
+
+### Viewing Flags
+
+Retrieve all flags for a submission:
+
+```typescript
+// From: packages/backend/convex/web/teacherAssignments.ts:296-317
+const flags = await getFlagsBySubmission({
+  submissionId: "submission_id"
+});
+
+// Returns array of flag documents:
+[
+  {
+    _id: "flag_id_1",
+    type: "suspicious_paste",
+    description: "Large code block appeared at 2:34 AM without incremental development",
+    timestamp: 1709251234567,
+    _creationTime: 1709251234567
+  },
+  // ... more flags
+]
+```
+
+### Removing Flags
+
+Delete a flag after review:
+
+```typescript
+// From: packages/backend/convex/web/teacherAssignments.ts:319-355
+await deleteFlag({
+  submissionId: "submission_id",
+  flagId: "flag_id"
+});
+
+// Validates:
+// 1. Submission exists
+// 2. Flag exists
+// 3. Flag belongs to this submission
+// 4. User has instructor access
+
+// Then:
+// 1. Deletes the flag document
+// 2. Removes flag ID from submission.flags array
+```
+
+<Note>
+  Flags are for instructor use only. Students do not see flags on their submissions.
+</Note>
+
+## Workspace Tracking
+
+Each student workspace is tracked separately:
+
+```typescript
+// From: packages/backend/convex/schema.ts:52-58
+workspaces: {
+  coderWorkspaceId: string,
+  isActive: boolean,
+  userId: string                // Better Auth user ID
+}
+
+// Indexed by: coderWorkspaceId, userId_isActive
+```
+
+### Active Workspace Management
+
+Leopard tracks which workspace is currently active:
+
+```typescript
+// From: packages/backend/convex/web/assignment.ts:111-145
+await setUserActiveWorkspace({
+  userId: "user_id",
+  coderWorkspaceId: "coder_workspace_id"
+});
+
+// Process:
+// 1. Find all workspaces for user
+// 2. Set target workspace to isActive: true
+// 3. Set all other workspaces to isActive: false
+// 4. Create workspace record if it doesn't exist
+```
+
+This ensures:
+- Only one workspace is active at a time
+- Events are attributed to the correct workspace
+- Easy lookup of student's current work
+
+## Detecting Academic Integrity Violations
+
+Use the event history to identify common violations:
+
+### Suspicious Patterns
+
+<CodeGroup>
+```typescript Large Code Paste
+// Pattern: Large blocks of code appearing instantly
+const events = await getReplay({ workspaceId });
+
+// Look for:
+// - Single DidChangeTextDocument events with >100 lines
+// - Multiple files created simultaneously
+// - Complete functions appearing without incremental edits
+
+const suspiciousPastes = events.filter(event => {
+  if (event.eventType !== 'DidChangeTextDocument') return false;
+  const totalChars = event.metadata.changes.reduce(
+    (sum, change) => sum + change.text.length, 0
+  );
+  return totalChars > 500; // Suspicious if >500 chars at once
+});
+```
+
+```typescript Unusual Timing
+// Pattern: Work done at unusual hours
+const events = await getReplay({ workspaceId });
+
+const nightEvents = events.filter(event => {
+  const hour = new Date(event.timestamp).getHours();
+  return hour >= 2 && hour <= 5; // 2 AM - 5 AM
+});
+
+// Flag if significant work done during these hours
+if (nightEvents.length > 20) {
+  await createFlag({
+    submissionId,
+    type: "unusual_timing",
+    description: `${nightEvents.length} events recorded between 2-5 AM`
+  });
+}
+```
+
+```typescript Rapid Completion
+// Pattern: Assignment completed too quickly
+const events = await getReplay({ workspaceId });
+
+if (events.length > 0) {
+  const firstEvent = events[0];
+  const lastEvent = events[events.length - 1];
+  const durationMs = lastEvent.timestamp - firstEvent.timestamp;
+  const durationMinutes = durationMs / 1000 / 60;
+  
+  // Flag if complex assignment done in <30 minutes
+  if (durationMinutes < 30) {
+    await createFlag({
+      submissionId,
+      type: "rapid_completion",
+      description: `Assignment completed in ${durationMinutes.toFixed(1)} minutes`
+    });
+  }
+}
+```
+
+```typescript External Files
+// Pattern: Files appearing from external sources
+const events = await getReplay({ workspaceId });
+
+const fileCreations = events.filter(event => 
+  event.eventType === 'FileCreate'
+);
+
+// Check for:
+// - .zip files being extracted
+// - Files downloaded from URLs
+// - Git clones from non-course repositories
+
+const suspiciousFiles = fileCreations.filter(event =>
+  event.metadata.filePath.includes('Downloads') ||
+  event.metadata.filePath.endsWith('.zip')
+);
+```
+</CodeGroup>
+
+## Best Practices for History Review
+
+<Steps>
+  <Step title="Review Before Grading">
+    Always check the event history before assigning final grades, especially for high-stakes assignments.
+  </Step>
+  
+  <Step title="Look for Patterns, Not Single Events">
+    One large paste might be legitimate. Multiple patterns together are more concerning.
+  </Step>
+  
+  <Step title="Document Flags Clearly">
+    Provide specific descriptions with timestamps and file names for each flag.
+  </Step>
+  
+  <Step title="Compare Across Students">
+    Look for identical code patterns between students by comparing event sequences.
+  </Step>
+  
+  <Step title="Use Flags for Follow-Up">
+    Flags should trigger conversations with students, not automatic penalties.
+  </Step>
+</Steps>
+
+## Event Metadata Structure
+
+Example of a text change event:
+
+```typescript
+// DidChangeTextDocument event structure
+{
+  _id: "event_id",
+  eventType: "DidChangeTextDocument",
+  timestamp: 1709251234567,
+  workspaceId: "workspace_id",
+  metadata: {
+    uri: "file:///workspace/main.py",
+    filePath: "main.py",
+    contentChanges: [
+      {
+        range: {
+          start: { line: 10, character: 0 },
+          end: { line: 10, character: 0 }
+        },
+        rangeLength: 0,
+        text: "def quicksort(arr):\n    if len(arr) <= 1:\n        return arr\n"
+      }
+    ],
+    version: 15
+  },
+  _creationTime: 1709251234567
+}
+```
+
+## Permissions
+
+Event history access is restricted:
+
+```typescript
+// Only instructors can view events:
+// - Classroom owners
+// - Teaching assistants
+// - Platform admins
+
+// Students cannot:
+// - View their own event history
+// - See flags on their submissions
+// - Access replay features
+```
+
+<Warning>
+  Event history contains sensitive information about student work patterns. Handle this data responsibly and in accordance with your institution's privacy policies.
+</Warning>
+
+## Future Enhancements
+
+Planned features for the history review system:
+
+1. **Automated Pattern Detection**: ML-based detection of suspicious patterns
+2. **Side-by-Side Comparison**: Compare two students' timelines simultaneously
+3. **Video Replay**: Visual playback of code changes over time
+4. **Export Reports**: Generate PDF reports of flagged submissions
+5. **Plagiarism Detection**: Compare code similarity across all submissions
+6. **Real-Time Alerts**: Notify instructors of suspicious activity as it happens

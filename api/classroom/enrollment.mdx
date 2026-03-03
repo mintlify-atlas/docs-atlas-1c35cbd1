@@ -1,0 +1,361 @@
+---
+title: Classroom Enrollment
+description: Manage student enrollment in classrooms
+---
+
+## Enroll in Classroom
+
+Enroll the current student in a classroom.
+
+<CodeGroup>
+```typescript Mutation
+import { api } from "./_generated/api";
+import { useMutation } from "convex/react";
+
+const enroll = useMutation(api.web.classroom.enroll);
+await enroll({
+  classroomId: "classroom_123"
+});
+```
+
+```typescript Response
+// Returns void on success
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/classroom.ts:79
+export const enroll = mutation({
+  args: {
+    classroomId: v.id("classrooms"),
+  },
+  handler: async (ctx, args) => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+
+    if (!user) {
+      throw new Error("User not authenticated");
+    }
+
+    await requireStudentRole(ctx, user._id);
+
+    // Check if already enrolled
+    const existingRelation = await ctx.db
+      .query("classroomStudentsRelations")
+      .withIndex("studentId_classroomId", (q) =>
+        q.eq("studentId", user._id).eq("classroomId", args.classroomId),
+      )
+      .first();
+
+    if (existingRelation) {
+      throw new Error("Already enrolled in this classroom");
+    }
+
+    // Create enrollment relation
+    await ctx.db.insert("classroomStudentsRelations", {
+      classroomId: args.classroomId,
+      studentId: user._id,
+    });
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="classroomId" type="Id<'classrooms'>" required>
+  The ID of the classroom to enroll in
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be authenticated as a student
+</ParamField>
+
+### Behavior
+
+- Creates an immediate enrollment relation (no approval required)
+- Enrollment is idempotent - attempting to enroll twice throws an error
+- Students can see available classrooms via `getAvailableToEnroll`
+
+### Errors
+
+<ResponseField name="User not authenticated" type="error">
+  No authenticated user
+</ResponseField>
+
+<ResponseField name="Only students can access classroom enrollment endpoints" type="error">
+  User does not have student role
+</ResponseField>
+
+<ResponseField name="Already enrolled in this classroom" type="error">
+  Student is already enrolled in the specified classroom
+</ResponseField>
+
+---
+
+## Get Enrolled Students
+
+Retrieve all students enrolled in a specific classroom.
+
+<CodeGroup>
+```typescript Query
+import { api } from "./_generated/api";
+import { useQuery } from "convex/react";
+
+const students = useQuery(api.web.teacher.getEnrolledStudents, {
+  classroomId: "classroom_123"
+});
+```
+
+```typescript Response
+[
+  {
+    _id: "relation_1",
+    _creationTime: 1704067200000,
+    studentId: "user_student1",
+    classroomId: "classroom_123"
+  },
+  {
+    _id: "relation_2",
+    _creationTime: 1704153600000,
+    studentId: "user_student2",
+    classroomId: "classroom_123"
+  }
+]
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/teacher.ts:111
+export const getEnrolledStudents = query({
+  args: {
+    classroomId: v.id("classrooms"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+    await requireInstructorAccess(ctx, args.classroomId, user._id);
+
+    return ctx.db
+      .query("classroomStudentsRelations")
+      .withIndex("classroomId_studentId", (q) => q.eq("classroomId", args.classroomId))
+      .collect();
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="classroomId" type="Id<'classrooms'>" required>
+  The classroom ID to query for enrolled students
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be an instructor (owner or assistant) for the classroom, or an admin
+</ParamField>
+
+### Return Type
+
+<ResponseField name="enrollments" type="array">
+  Array of enrollment relation objects
+  
+  <Expandable title="fields">
+    <ResponseField name="_id" type="Id<'classroomStudentsRelations'>">
+      Unique enrollment relation ID
+    </ResponseField>
+    <ResponseField name="studentId" type="string">
+      User ID of the enrolled student
+    </ResponseField>
+    <ResponseField name="classroomId" type="Id<'classrooms'>">
+      The classroom ID
+    </ResponseField>
+    <ResponseField name="_creationTime" type="number">
+      Timestamp when enrollment was created
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tip>
+For student profiles (name, email), use `getClassroomDetails` instead, which enriches enrollment data with user information.
+</Tip>
+
+---
+
+## Update Enrollment Status
+
+Approve or reject a student enrollment. This is a compatibility endpoint for UIs with approval workflows.
+
+<Info>
+In the current schema, enrollment is immediate. This endpoint allows for:
+- **approved**: Creates enrollment if it doesn't exist
+- **rejected**: Removes enrollment if it exists
+</Info>
+
+<CodeGroup>
+```typescript Mutation
+import { api } from "./_generated/api";
+import { useMutation } from "convex/react";
+
+const updateStatus = useMutation(api.web.teacher.updateEnrollmentStatus);
+
+// Approve enrollment
+await updateStatus({
+  classroomId: "classroom_123",
+  studentId: "user_student1",
+  status: "approved"
+});
+
+// Reject/remove enrollment
+await updateStatus({
+  classroomId: "classroom_123",
+  studentId: "user_student2",
+  status: "rejected"
+});
+```
+
+```typescript Response
+// Returns void on success
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/teacher.ts:222
+export const updateEnrollmentStatus = mutation({
+  args: {
+    classroomId: v.id("classrooms"),
+    studentId: v.string(),
+    status: v.union(v.literal("approved"), v.literal("rejected")),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+    await requireInstructorAccess(ctx, args.classroomId, user._id);
+
+    const relation = await ctx.db
+      .query("classroomStudentsRelations")
+      .withIndex("studentId_classroomId", (q) =>
+        q.eq("studentId", args.studentId).eq("classroomId", args.classroomId),
+      )
+      .first();
+
+    if (args.status === "approved") {
+      if (!relation) {
+        await ctx.db.insert("classroomStudentsRelations", {
+          classroomId: args.classroomId,
+          studentId: args.studentId,
+        });
+      }
+      return;
+    }
+
+    if (relation) {
+      await ctx.db.delete(relation._id);
+    }
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="classroomId" type="Id<'classrooms'>" required>
+  The classroom ID
+</ParamField>
+
+<ParamField path="studentId" type="string" required>
+  The student's user ID
+</ParamField>
+
+<ParamField path="status" type="'approved' | 'rejected'" required>
+  The enrollment status action to perform
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be an instructor for the classroom or an admin
+</ParamField>
+
+### Behavior
+
+- **approved**: Creates enrollment relation if it doesn't exist, idempotent if it does
+- **rejected**: Deletes enrollment relation if it exists, idempotent if it doesn't
+
+---
+
+## Remove Student
+
+Remove a student from a classroom enrollment.
+
+<CodeGroup>
+```typescript Mutation
+import { api } from "./_generated/api";
+import { useMutation } from "convex/react";
+
+const removeStudent = useMutation(api.web.teacher.removeStudent);
+await removeStudent({
+  classroomId: "classroom_123",
+  studentId: "user_student1"
+});
+```
+
+```typescript Response
+// Returns void on success
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/teacher.ts:255
+export const removeStudent = mutation({
+  args: {
+    classroomId: v.id("classrooms"),
+    studentId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+    await requireInstructorAccess(ctx, args.classroomId, user._id);
+
+    const relation = await ctx.db
+      .query("classroomStudentsRelations")
+      .withIndex("studentId_classroomId", (q) =>
+        q.eq("studentId", args.studentId).eq("classroomId", args.classroomId),
+      )
+      .first();
+
+    if (!relation) {
+      throw new Error("Student is not enrolled in this classroom");
+    }
+
+    await ctx.db.delete(relation._id);
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="classroomId" type="Id<'classrooms'>" required>
+  The classroom ID
+</ParamField>
+
+<ParamField path="studentId" type="string" required>
+  The student's user ID to remove
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be an instructor for the classroom or an admin
+</ParamField>
+
+### Errors
+
+<ResponseField name="Student is not enrolled in this classroom" type="error">
+  The specified student is not enrolled in the classroom
+</ResponseField>
+
+<ResponseField name="Not authorized for this classroom" type="error">
+  User does not have permission to manage this classroom
+</ResponseField>

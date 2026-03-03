@@ -1,0 +1,309 @@
+---
+title: Workspace Events API
+description: Submit and query workspace events for activity tracking
+---
+
+## Add Batched Events
+
+Submit a batch of workspace events from a VS Code extension or other monitoring client.
+
+<CodeGroup>
+```typescript Mutation
+import { api } from "./_generated/api";
+import { useMutation } from "convex/react";
+
+const addEvents = useMutation(api.api.extension.addBatchedChangesMutation);
+await addEvents({
+  hostname: "coder-273044a0-03a7-49ef-b1a4-e1bbc3c49d9b-7b78cdf4d9-mx66l",
+  changes: [
+    {
+      eventType: "DID_CHANGE_TEXT_DOCUMENT",
+      timestamp: Date.now(),
+      metadata: {
+        contentChanges: [{
+          filePath: "/workspace/main.py",
+          range: { start: { line: 0, column: 0 }, end: { line: 0, column: 0 } },
+          text: "import numpy as np\n"
+        }]
+      }
+    },
+    {
+      eventType: "DID_SAVE_TEXT_DOCUMENT",
+      timestamp: Date.now(),
+      metadata: {
+        filePath: "/workspace/main.py"
+      }
+    }
+  ]
+});
+```
+
+```typescript Response
+// Returns void on success
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript api/extension.ts:7
+export const addBatchedChangesMutation = mutation({
+  args: {
+    hostname: v.string(),
+    changes: v.array(
+      v.object({
+        eventType: v.string(),
+        timestamp: v.number(),
+        metadata: v.record(v.string(), v.any()),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    // Extract workspace ID from hostname format: coder-<workspaceId>-<pod-id>
+    // Example: coder-273044a0-03a7-49ef-b1a4-e1bbc3c49d9b-7b78cdf4d9-mx66l
+    // UUID format has 5 parts separated by hyphens, so workspace ID is parts 1-5
+    const hostnameParts = args.hostname.split("-");
+    if (hostnameParts.length < 6) {
+      console.log("Invalid hostname format:", args.hostname);
+      return;
+    }
+
+    // The workspace ID is parts 1-5 (indices 1-5, excluding index 6+)
+    const coderWorkspaceId = hostnameParts.slice(1, 6).join("-");
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(coderWorkspaceId)) {
+      console.log("Invalid workspace ID format:", coderWorkspaceId);
+      return;
+    }
+
+    // Lookup workspace by coderWorkspaceId
+    const workspace = await ctx.db
+      .query("workspaces")
+      .withIndex("coderWorkspaceId", (q) =>
+        q.eq("coderWorkspaceId", coderWorkspaceId),
+      )
+      .first();
+
+    if (!workspace) {
+      console.log("No workspace found for coderWorkspaceId:", coderWorkspaceId);
+      return;
+    }
+
+    for (const change of args.changes) {
+      const newEvent: WithoutSystemFields<Doc<"events">> = {
+        workspaceId: workspace._id,
+        ...change,
+      };
+      const eventId = await ctx.db.insert("events", newEvent);
+    }
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="hostname" type="string" required>
+  The hostname of the Coder workspace pod. Must follow the format:
+  `coder-<workspace-uuid>-<pod-suffix>`
+  
+  Example: `coder-273044a0-03a7-49ef-b1a4-e1bbc3c49d9b-7b78cdf4d9-mx66l`
+</ParamField>
+
+<ParamField path="changes" type="array" required>
+  Array of event objects to insert
+  
+  <Expandable title="Event object fields">
+    <ParamField path="eventType" type="string" required>
+      The type of event (e.g., "DID_CHANGE_TEXT_DOCUMENT", "FILE_CREATED")
+    </ParamField>
+    
+    <ParamField path="timestamp" type="number" required>
+      Unix timestamp in milliseconds when the event occurred
+    </ParamField>
+    
+    <ParamField path="metadata" type="Record<string, any>" required>
+      Event-specific metadata containing details about the event
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Not Required">
+  This endpoint is designed for extension clients and does not require user authentication. Workspaces are identified by hostname parsing.
+</ParamField>
+
+<Warning>
+  In production, consider adding API key authentication or other security measures to prevent unauthorized event submission.
+</Warning>
+
+### Hostname Format
+
+The hostname must follow Coder's pod naming convention:
+
+```
+coder-<uuid>-<pod-suffix>
+```
+
+Where:
+- `<uuid>` is a valid UUID v4 (5 parts: 8-4-4-4-12 hex digits)
+- `<pod-suffix>` is the Kubernetes pod identifier
+
+The workspace ID is extracted from parts 1-5 of the hostname split by hyphens.
+
+### Error Handling
+
+The endpoint fails silently (returns without inserting) in these cases:
+
+<ResponseField name="Invalid hostname format" type="silent failure">
+  Hostname doesn't have at least 6 dash-separated parts
+</ResponseField>
+
+<ResponseField name="Invalid workspace ID format" type="silent failure">
+  Extracted UUID doesn't match UUID v4 regex pattern
+</ResponseField>
+
+<ResponseField name="No workspace found" type="silent failure">
+  No workspace exists with the extracted `coderWorkspaceId`
+</ResponseField>
+
+<Info>
+  Silent failures allow the extension to continue operating even if event submission fails. Consider implementing retry logic in the client.
+</Info>
+
+### Behavior
+
+- Events are inserted sequentially in the order provided
+- Each event is associated with the workspace found via hostname parsing
+- Timestamps should be client-generated for accurate event ordering
+- Duplicate events are not automatically deduplicated
+
+---
+
+## Event Metadata Examples
+
+### Text Change Event
+
+```json
+{
+  "eventType": "DID_CHANGE_TEXT_DOCUMENT",
+  "timestamp": 1769638584411,
+  "metadata": {
+    "contentChanges": [
+      {
+        "filePath": "/workspace/algorithm.py",
+        "range": {
+          "start": { "line": 10, "column": 4 },
+          "end": { "line": 10, "column": 4 }
+        },
+        "text": "return result"
+      }
+    ]
+  }
+}
+```
+
+### File Operation Event
+
+```json
+{
+  "eventType": "FILE_CREATED",
+  "timestamp": 1769638590000,
+  "metadata": {
+    "filePath": "/workspace/utils.py",
+    "fileType": "python"
+  }
+}
+```
+
+### Multiple Changes in Single Event
+
+```json
+{
+  "eventType": "DID_CHANGE_TEXT_DOCUMENT",
+  "timestamp": 1769638600190,
+  "metadata": {
+    "contentChanges": [
+      {
+        "filePath": "/workspace/main.py",
+        "range": { "start": { "line": 5, "column": 4 }, "end": { "line": 5, "column": 5 } },
+        "text": ""
+      },
+      {
+        "filePath": "/workspace/main.py",
+        "range": { "start": { "line": 10, "column": 4 }, "end": { "line": 10, "column": 5 } },
+        "text": ""
+      }
+    ]
+  }
+}
+```
+
+---
+
+## Workspace Schema
+
+### Database Schema
+
+```typescript schema.ts:52
+workspaces: defineTable({
+  coderWorkspaceId: v.string(),
+  isActive: v.boolean(),
+  userId: v.string(),
+})
+  .index("coderWorkspaceId", ["coderWorkspaceId"])
+  .index("userId_isActive", ["userId", "isActive"])
+```
+
+<ResponseField name="coderWorkspaceId" type="string">
+  The UUID of the workspace in Coder (extracted from hostname)
+</ResponseField>
+
+<ResponseField name="userId" type="string">
+  User ID of the student who owns the workspace
+</ResponseField>
+
+<ResponseField name="isActive" type="boolean">
+  Whether this is the student's currently active workspace
+</ResponseField>
+
+---
+
+## Best Practices
+
+### Client Implementation
+
+1. **Batch events**: Collect events client-side and submit in batches (e.g., every 5 seconds or 50 events)
+2. **Include timestamps**: Always use client-generated timestamps for accurate ordering
+3. **Handle failures gracefully**: Don't block the editor if event submission fails
+4. **Implement retry logic**: Queue failed batches for retry with exponential backoff
+
+### Event Metadata
+
+1. **Be consistent**: Use consistent field names across event types
+2. **Include context**: Add enough metadata for meaningful analysis (file paths, change ranges, etc.)
+3. **Avoid PII**: Don't include personally identifiable information in metadata
+4. **Compress large payloads**: For large text changes, consider compression or summarization
+
+### Performance
+
+1. **Rate limiting**: Implement client-side rate limiting to avoid overwhelming the API
+2. **Optimize batch size**: Balance between network overhead and real-time tracking needs
+3. **Index usage**: Events are indexed by `workspaceId_timestamp` for efficient querying
+
+---
+
+## Querying Events
+
+While there's no public query endpoint yet, instructors can access events through internal queries:
+
+```typescript
+const events = await ctx.db
+  .query("events")
+  .withIndex("workspaceId_timestamp", (q) => 
+    q.eq("workspaceId", workspaceId)
+  )
+  .collect();
+```
+
+Events are returned in chronological order and can be filtered by time range for specific analysis windows.

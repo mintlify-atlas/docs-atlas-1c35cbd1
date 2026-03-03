@@ -1,0 +1,136 @@
+---
+title: Introduction
+description: Verify student work legitimacy through granular IDE tracking and version history analysis
+---
+
+## What is Leopard?
+
+Leopard is an academic integrity platform that helps educators verify the legitimacy of student assignments by tracking and analyzing their complete work process through IDE event monitoring. Instead of just checking final submissions, Leopard captures every code change, providing a granular version history that reveals how students actually completed their work.
+
+<CardGroup cols={2}>
+  <Card title="For teachers" icon="chalkboard-user" href="/teachers/managing-classrooms">
+    Create classrooms, assign work, and review submission histories
+  </Card>
+  <Card title="For students" icon="graduation-cap" href="/students/setup-extension">
+    Install the VSCode extension and submit your work with full tracking
+  </Card>
+  <Card title="VSCode extension" icon="code" href="/extension/installation">
+    Learn how the IDE tracking extension captures your coding activity
+  </Card>
+  <Card title="API reference" icon="book" href="/api/auth/overview">
+    Integrate Leopard into your own educational tools
+  </Card>
+</CardGroup>
+
+## Key features
+
+### IDE event tracking
+
+The VSCode extension automatically captures document changes as you code. Every text edit is recorded with precise timestamps and file locations, creating a complete timeline of your development process.
+
+```typescript
+// Extension tracks events like onDidChangeTextDocument
+vscode.workspace.onDidChangeTextDocument((e) => {
+  BatchedConvexHttpClient.getInstance().addEvent({
+    timestamp: Date.now(),
+    eventType: "DID_CHANGE_TEXT_DOCUMENT",
+    metadata: {
+      contentChanges: e.contentChanges.map((change) => ({
+        range: {
+          start: { line: change.range.start.line, column: change.range.start.character },
+          end: { line: change.range.end.line, column: change.range.end.character }
+        },
+        text: change.text,
+        filePath: e.document.uri.fsPath
+      }))
+    }
+  });
+});
+```
+
+### Classroom management
+
+Teachers can create and manage multiple classrooms, each containing students and assignments. The platform supports:
+
+- Creating classrooms with unique identifiers
+- Adding students to classrooms
+- Organizing assignments by classroom
+- Tracking enrollment and participation
+
+### Assignment submissions
+
+Students submit assignments by linking their workspace activity to specific assignments. The system tracks:
+
+- Submission timestamps
+- Associated workspace IDs
+- Complete event history for the assignment period
+- Grading and feedback from teachers
+
+<Note>
+Submissions are automatically linked to workspace events, ensuring that all tracked activity during the assignment period is captured for review.
+</Note>
+
+### History replay
+
+The platform's replay feature reconstructs the coding process by playing back all captured events in sequence. Teachers can:
+
+- Watch the exact sequence of code changes
+- Identify patterns that suggest academic integrity issues
+- Understand the student's problem-solving approach
+- Verify that work was completed genuinely
+
+## How it works
+
+<Steps>
+  <Step title="Extension installation">
+    Students install the Leopard VSCode extension, which begins tracking their coding activity. The extension sends batched events to the Convex backend every second by default.
+  </Step>
+  
+  <Step title="Workspace creation">
+    When a student starts working, the system creates a workspace record linked to their user account. Each workspace has a unique identifier and tracks whether it's currently active.
+  </Step>
+  
+  <Step title="Event capture">
+    As students code, the extension captures every text document change with metadata including file paths, line ranges, and the actual text modifications. Events are debounced and sent in batches for efficiency.
+  </Step>
+  
+  <Step title="Assignment submission">
+    When ready to submit, students link their workspace to an assignment. The backend associates all workspace events within the assignment period with that submission.
+  </Step>
+  
+  <Step title="Review and grading">
+    Teachers access the submission through the dashboard, replay the coding history, and provide grades and feedback. The system tracks who graded the submission and when.
+  </Step>
+</Steps>
+
+<Info>
+The extension is configured via VSCode settings. The default Convex URL is `https://optimistic-kangaroo-331.convex.cloud`, but you can specify a custom deployment URL using the `leopard.convexUrl` setting.
+</Info>
+
+## Architecture overview
+
+Leopard is built as a monorepo with three main components:
+
+- **VSCode Extension** (`apps/vscode-extension`): TypeScript extension that monitors IDE events and sends them to the backend
+- **Next.js Web App** (`apps/nextjs`): React-based dashboard for teachers and students to manage classrooms, assignments, and submissions
+- **Convex Backend** (`packages/backend`): Serverless backend that stores events, manages users, and provides real-time data synchronization
+
+The schema defines six core tables:
+
+- `users`: Student and teacher accounts with role-based access
+- `classrooms`: Teacher-owned classes with enrolled students
+- `assignments`: Work items with due dates and descriptions
+- `submissions`: Student work linked to assignments and workspaces
+- `workspaces`: Active coding sessions tracked by the extension
+- `events`: Granular IDE events with timestamps and metadata
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quick start" icon="rocket" href="/quickstart">
+    Get up and running in 5 minutes
+  </Card>
+  <Card title="Installation guide" icon="download" href="/extension/installation">
+    Detailed setup instructions for all components
+  </Card>
+</CardGroup>

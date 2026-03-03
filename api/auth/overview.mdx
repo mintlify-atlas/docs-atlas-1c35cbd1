@@ -1,0 +1,205 @@
+---
+title: Authentication
+description: Learn how Leopard handles authentication using Better Auth
+---
+
+## Overview
+
+Leopard uses [Better Auth](https://better-auth.com) integrated with Convex for authentication. The platform supports email/password authentication and implements role-based access control with three user roles.
+
+## Authentication Flow
+
+Authentication is handled through the Better Auth integration:
+
+```typescript
+import { createAuth } from "./auth";
+import { authComponent } from "./auth";
+```
+
+### Configuration
+
+The authentication system is configured with:
+
+- **Email/Password Authentication**: Simple, non-verified email/password login
+- **Cross-subdomain cookies**: Enabled for seamless authentication across subdomains
+- **Convex integration**: Uses Better Auth Convex plugin for database operations
+
+```typescript
+emailAndPassword: {
+  enabled: true,
+  requireEmailVerification: false,
+}
+```
+
+## User Roles
+
+Leopard implements three distinct user roles:
+
+<ParamField path="role" type="union">
+  The user role type
+  
+  <Expandable title="values">
+    <ResponseField name="student" type="literal">
+      Default role for new users. Can enroll in classrooms, submit assignments, and access their own submissions.
+    </ResponseField>
+    
+    <ResponseField name="teacher" type="literal">
+      Can create and manage classrooms, create assignments, grade submissions, and manage enrolled students.
+    </ResponseField>
+    
+    <ResponseField name="admin" type="literal">
+      Full system access. Can access all classrooms and perform all teacher operations across the platform.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+## Getting Current User
+
+Retrieve the currently authenticated user:
+
+<CodeGroup>
+```typescript Query
+import { api } from "./_generated/api";
+import { useQuery } from "convex/react";
+
+const user = useQuery(api.auth.getCurrentUser);
+```
+
+```typescript Response
+{
+  _id: "user_123abc",
+  email: "student@university.edu",
+  name: "John Doe",
+  username: "johndoe"
+}
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/classroom.ts:60
+export const getCurrentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    return authComponent.getAuthUser(ctx);
+  },
+});
+```
+
+## Role-Based Access Control
+
+### Helper Functions
+
+Leopard provides several helper functions for role validation:
+
+#### getUserRole
+
+```typescript helpers/roles.ts:7
+export const getUserRole = async (
+  ctx: RoleLookupCtx,
+  userId: string,
+): Promise<UserRole> => {
+  const user = await ctx.db
+    .query("users")
+    .withIndex("uid", (q) => q.eq("uid", userId))
+    .first();
+
+  if (!user) {
+    return "student";
+  }
+
+  return user.role;
+};
+```
+
+#### requireAuth
+
+Ensures a user is authenticated:
+
+```typescript web/user.ts:20
+export async function requireAuth(ctx: DbCtx) {
+  const user = await authComponent.safeGetAuthUser(ctx);
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+  return user;
+}
+```
+
+#### requireTeacherOrAdmin
+
+Restricts access to teachers and admins:
+
+```typescript web/user.ts:28
+export async function requireTeacherOrAdmin(ctx: DbCtx, userId: string) {
+  const role = await getUserRole(ctx, userId);
+  if (role !== "teacher" && role !== "admin") {
+    throw new Error("Only teachers can access this endpoint");
+  }
+}
+```
+
+## Ensure User Role
+
+Ensures the current user has a role record in the database, creating one with default "student" role if it doesn't exist:
+
+<CodeGroup>
+```typescript Mutation
+import { api } from "./_generated/api";
+import { useMutation } from "convex/react";
+
+const ensureRole = useMutation(api.web.user.ensureCurrentUserRole);
+const role = await ensureRole();
+```
+
+```typescript Response
+"student"
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/user.ts:35
+export const ensureCurrentUserRole = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const authUser = await requireAuth(ctx);
+
+    const existingUser = await ctx.db
+      .query("users")
+      .withIndex("uid", (q) => q.eq("uid", authUser._id))
+      .first();
+
+    if (existingUser) {
+      return existingUser.role;
+    }
+
+    await ctx.db.insert("users", {
+      uid: authUser._id,
+      role: "student",
+    });
+
+    return "student" as const;
+  },
+});
+```
+
+## Error Handling
+
+### Common Authentication Errors
+
+<ResponseField name="Not authenticated" type="error">
+  Thrown when a user attempts to access a protected endpoint without authentication.
+</ResponseField>
+
+<ResponseField name="Only students can access..." type="error">
+  Thrown when a non-student user attempts to access student-only endpoints.
+</ResponseField>
+
+<ResponseField name="Only teachers can access..." type="error">
+  Thrown when a non-teacher/admin user attempts to access instructor endpoints.
+</ResponseField>
+
+<ResponseField name="Not authorized..." type="error">
+  Thrown when a user doesn't have permission for the specific resource (e.g., not enrolled in classroom).
+</ResponseField>

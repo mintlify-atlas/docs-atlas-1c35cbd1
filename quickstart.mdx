@@ -1,80 +1,256 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick start
+description: Get started with Leopard in minutes - for both teachers and students
 ---
 
-## Get started in three steps
+## For teachers
 
-Get your documentation site running locally and make your first customization.
+Set up your classroom and create your first assignment in four steps.
 
-### Step 1: Set up your local environment
+<Steps>
+  <Step title="Create your account">
+    Sign up at the Leopard web dashboard and select the teacher role. Your account will be automatically configured with teacher permissions.
+    
+    ```typescript
+    // Users table includes role-based access
+    users: defineTable({
+      uid: v.string(),
+      role: v.union(
+        v.literal("admin"),
+        v.literal("student"),
+        v.literal("teacher")
+      )
+    })
+    ```
+  </Step>
+  
+  <Step title="Create a classroom">
+    Navigate to `/teacher/classroom/new` and provide a classroom name. The system creates a classroom record with you as the owner.
+    
+    ```typescript
+    const createClassroom = useMutation(api.web.teacher.createClassroom);
+    
+    const classroomId = await createClassroom({
+      className: "Intro to Systems"
+    });
+    ```
+    
+    <Info>
+    Students can see available classrooms and enroll themselves. You can also add assistant instructors using the `assistantIds` array.
+    </Info>
+  </Step>
+  
+  <Step title="Create an assignment">
+    From your classroom page, click "Create Assignment" to set up new work for students. Configure:
+    
+    - Assignment name (e.g., "Week 3 - Sorting Algorithms")
+    - Description with instructions (supports markdown)
+    - Release date (when students can start)
+    - Due date (submission deadline)
+    
+    ```typescript
+    const assignmentId = await createAssignment({
+      classroomId,
+      name: "Week 3 - Sorting Algorithms",
+      description: "Implement quicksort and mergesort...",
+      releaseDate: Date.parse("2026-03-10T09:00"),
+      dueDate: Date.parse("2026-03-17T23:59")
+    });
+    ```
+    
+    <Note>
+    The due date must be after the release date. Both dates use timestamp values (milliseconds since epoch).
+    </Note>
+  </Step>
+  
+  <Step title="Review submissions">
+    Once students submit their work, access submissions from `/teacher/classroom/{id}/assignment/{assignmentId}`. You can:
+    
+    - View the complete list of submissions
+    - Replay each student's coding history
+    - Add grades and feedback
+    - Track submission timestamps
+    
+    ```typescript
+    submissions: defineTable({
+      assignmentId: v.id("assignments"),
+      studentId: v.string(),
+      workspaceId: v.optional(v.id("workspaces")),
+      submittedAt: v.number(),
+      grade: v.optional(v.float64()),
+      submissionFeedback: v.optional(v.string()),
+      gradedBy: v.optional(v.string()),
+      gradedAt: v.optional(v.number()),
+      gradesReleased: v.boolean()
+    })
+    ```
+  </Step>
+</Steps>
+
+### Reviewing with history replay
+
+The replay feature at `/replay` reconstructs student work by sequentially applying all captured events. This allows you to:
+
+- Watch code being written in real-time (or accelerated)
+- Identify suspicious patterns like large paste operations
+- Understand the student's problem-solving process
+- Verify authentic work completion
+
+## For students
+
+Start tracking your work and submit assignments in four steps.
+
+<Steps>
+  <Step title="Install the VSCode extension">
+    Download and install the Leopard VSCode extension from the marketplace or load it manually:
+    
+    1. Build the extension: `pnpm run build` in `apps/vscode-extension`
+    2. Install the generated `.vsix` file in VSCode
+    3. The extension activates automatically on startup
+    
+    ```json
+    {
+      "activationEvents": ["onStartupFinished"],
+      "contributes": {
+        "configuration": {
+          "properties": {
+            "leopard.convexUrl": {
+              "type": "string",
+              "default": "https://optimistic-kangaroo-331.convex.cloud"
+            }
+          }
+        }
+      }
+    }
+    ```
+    
+    <Info>
+    Check the "Leopard Event Logger" output channel in VSCode to confirm the extension is active and sending events.
+    </Info>
+  </Step>
+  
+  <Step title="Join a classroom">
+    Navigate to `/student` in the web dashboard to see available classrooms. Click "Enroll" to join:
+    
+    ```typescript
+    const enroll = useMutation(api.web.classroom.enroll);
+    
+    await enroll({ classroomId });
+    ```
+    
+    Once enrolled, you'll see all assignments for that classroom.
+  </Step>
+  
+  <Step title="Work on your assignment">
+    From the classroom page at `/student/classroom/{id}`, launch a workspace for your assignment:
+    
+    1. Click "Launch Workspace" on the assignment card
+    2. Open your project in VSCode with the extension installed
+    3. Start coding - all changes are automatically tracked
+    
+    The extension batches events and sends them every 1000ms by default:
+    
+    ```typescript
+    // Events are debounced and batched for efficiency
+    this.debouncer = setTimeout(() => {
+      void this.submitEvents();
+    }, this.debounceDelay);
+    ```
+    
+    <Note>
+    The extension tracks `onDidChangeTextDocument` events with file paths, line ranges, and text changes. Make sure the extension is active while working on your assignment.
+    </Note>
+  </Step>
+  
+  <Step title="Submit your work">
+    When finished, submit your assignment from the web dashboard:
+    
+    1. Navigate to the assignment detail page
+    2. Click "Submit" to link your workspace to the assignment
+    3. The system captures all events from your workspace during the assignment period
+    
+    Your submission will include:
+    
+    - Submission timestamp
+    - Linked workspace ID with all tracked events
+    - Complete coding history for teacher review
+    
+    ```typescript
+    // Submission links your workspace to the assignment
+    {
+      assignmentId: assignment._id,
+      studentId: currentUser.uid,
+      workspaceId: workspace._id,
+      submittedAt: Date.now(),
+      gradesReleased: false
+    }
+    ```
+  </Step>
+</Steps>
+
+## Verification
+
+Confirm everything is working:
 
 <AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+  <Accordion title="Extension is tracking">
+    Open the VSCode Output panel (View → Output) and select "Leopard Event Logger" from the dropdown. You should see:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
+    ```
+    [INIT] Leopard extension activated
+    [INIT] Convex URL: https://optimistic-kangaroo-331.convex.cloud
+    [INIT] Hostname: your-hostname
+    [1234567890] Logged an event: DID_CHANGE_TEXT_DOCUMENT
+    [1234567890] SENDING: 5 batched event(s) to Convex...
+    [1234567891] SUCCESS: 5 batched event(s) uploaded to Convex
+    ```
   </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+  
+  <Accordion title="Workspace is active">
+    In the web dashboard, verify your workspace shows as active:
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
+    ```typescript
+    workspaces: defineTable({
+      coderWorkspaceId: v.string(),
+      isActive: v.boolean(),
+      userId: v.string()
+    })
+    ```
+    
+    The `isActive` flag should be `true` while you're working.
+  </Accordion>
+  
+  <Accordion title="Events are stored">
+    Teachers can verify events are being captured by accessing the replay page. Events should appear with:
+    
+    - Correct timestamps in ascending order
+    - File paths matching your project structure
+    - Text changes reflecting your edits
+    
+    ```typescript
+    events: defineTable({
+      eventType: v.string(),
+      timestamp: v.number(),
+      workspaceId: v.id("workspaces"),
+      metadata: v.record(v.string(), v.any())
+    })
+    ```
   </Accordion>
 </AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Teachers guide" icon="chalkboard-user" href="/teachers/managing-classrooms">
+    Learn advanced classroom management features
+  </Card>
+  <Card title="Students guide" icon="graduation-cap" href="/students/setup-extension">
+    Best practices for tracked assignments
+  </Card>
+  <Card title="Extension configuration" icon="gear" href="/extension/configuration">
+    Customize the VSCode extension settings
+  </Card>
+  <Card title="API documentation" icon="code" href="/api/auth/overview">
+    Integrate Leopard with your tools
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

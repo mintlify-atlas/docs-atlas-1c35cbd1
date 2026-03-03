@@ -1,0 +1,351 @@
+---
+title: 'Workspace Tracking'
+description: 'Understand what data is tracked while you work on assignments'
+---
+
+Leopard tracks your coding activity to provide instructors with insights into your work process. This page explains what data is collected, how it's used, and how you can monitor the tracking.
+
+## What is Tracked
+
+The Leopard VSCode extension tracks specific events while you work in your assignment workspace.
+
+### Document Change Events
+
+The primary tracked event is `DID_CHANGE_TEXT_DOCUMENT`, which captures:
+
+- **Timestamp** - When the change occurred (milliseconds)
+- **File Path** - Which file was edited
+- **Text Changes** - The actual text inserted or deleted
+- **Range** - Exact location (line and column) of the change
+
+```typescript
+// From workspaceEvents.ts:22-42
+export const DidChangeTextDocument = Event.extend({
+  eventType: z.literal("DID_CHANGE_TEXT_DOCUMENT"),
+  metadata: z.object({
+    contentChanges: z.array(
+      z.object({
+        range: z.object({
+          start: z.object({
+            line: z.number(),
+            column: z.number(),
+          }),
+          end: z.object({
+            line: z.number(),
+            column: z.number(),
+          }),
+        }),
+        text: z.string(),
+        filePath: z.string(),
+      })
+    ),
+  }),
+});
+```
+
+### Example Tracked Event
+
+When you type `console.log("Hello")` at line 10, column 4 of `index.js`, the extension captures:
+
+```json
+{
+  "timestamp": 1234567890123,
+  "eventType": "DID_CHANGE_TEXT_DOCUMENT",
+  "metadata": {
+    "contentChanges": [
+      {
+        "range": {
+          "start": { "line": 10, "column": 4 },
+          "end": { "line": 10, "column": 4 }
+        },
+        "text": "console.log(\"Hello\")",
+        "filePath": "/path/to/index.js"
+      }
+    ]
+  }
+}
+```
+
+## What is NOT Tracked
+
+The extension explicitly ignores certain events:
+
+<Warning>
+  Changes to output channels, including the Leopard Event Logger itself, are never tracked.
+</Warning>
+
+### Currently Disabled Events
+
+The following events are commented out in the source code and **not tracked**:
+
+- File open/close events
+- File creation/deletion/rename
+- File save events
+- Text selection changes
+- Copy/paste operations
+- Terminal commands and output
+- Terminal state changes
+
+```typescript
+// From extension.ts:37-163
+// TODO comments indicate disabled tracking:
+// - onDidOpenTextDocument
+// - onDidCloseTextDocument  
+// - onDidCreateFiles
+// - onDidDeleteFiles
+// - onDidRenameFiles
+// - onDidSaveTextDocument
+// - onDidAcceptCopy
+// - onDidChangeTextEditorSelection
+// - onDidChangeTerminalState
+// - onDidEndTerminalShellExecution
+```
+
+<Info>
+  Instructors may enable additional event types in future versions, but currently only document changes are tracked.
+</Info>
+
+## How Tracking Works
+
+### Event Batching
+
+The extension batches events to reduce network traffic:
+
+1. Events are collected in a buffer
+2. Every **1000ms (1 second)**, buffered events are sent to the server
+3. If sending fails, events are kept and retried
+
+```typescript
+// From extension.ts:184-213
+private constructor(
+  client: ConvexHttpClient,
+  hostname: string,
+  channel: vscode.OutputChannel,
+  debounceDelay: number, // 1000ms by default
+) {
+  this.client = client;
+  this.channel = channel;
+  this.debounceDelay = debounceDelay;
+  this.eventBuffer = [];
+  this.hostname = hostname;
+}
+
+public addEvent(event: ...) {
+  this.eventBuffer.push(event);
+  if (this.debouncer) {
+    clearTimeout(this.debouncer);
+  }
+  this.debouncer = setTimeout(() => {
+    void this.submitEvents();
+  }, this.debounceDelay);
+}
+```
+
+### Network Submission
+
+When events are sent:
+
+```typescript
+// From extension.ts:223-257
+private async submitEvents() {
+  if (this.eventBuffer.length === 0) {
+    return;
+  }
+
+  const eventsToSend = [...this.eventBuffer];
+  this.eventBuffer = [];
+
+  try {
+    this.channel.appendLine(
+      `[${Date.now()}] SENDING: ${eventsToSend.length} batched event(s) to Convex...`
+    );
+
+    await this.client.mutation(api.api.extension.addBatchedChangesMutation, {
+      hostname: this.hostname,
+      changes: eventsToSend,
+    });
+
+    this.channel.appendLine(
+      `[${Date.now()}] SUCCESS: ${eventsToSend.length} batched event(s) uploaded to Convex`
+    );
+  } catch (error) {
+    // Re-add events to buffer on failure
+    this.eventBuffer.unshift(...eventsToSend);
+    this.channel.appendLine(
+      `[${Date.now()}] ERROR: Failed to upload batched events - ${errorMsg}`
+    );
+  }
+}
+```
+
+## Privacy Considerations
+
+### What Instructors Can See
+
+Your instructor has access to:
+
+- **Complete edit history** - Every character you type or delete
+- **File paths** - Which files you work on
+- **Timestamps** - When you make changes
+- **Work patterns** - How you approach solving problems
+
+### What Instructors CANNOT See
+
+- Files you don't edit (read-only access doesn't trigger events)
+- Terminal commands (currently disabled)
+- Copy/paste operations (currently disabled)
+- Activity outside your assignment workspace
+
+<Info>
+  Tracking only occurs in workspaces launched through Leopard for assignments. Your personal coding projects and other VSCode windows are never tracked.
+</Info>
+
+## Monitoring Tracked Events
+
+You can see exactly what data is being tracked in real-time.
+
+<Steps>
+  <Step title="Open the Output Panel">
+    In VSCode, go to **View > Output** or press `Ctrl+Shift+U` / `Cmd+Shift+U`.
+  </Step>
+
+  <Step title="Select Leopard Event Logger">
+    Choose **Leopard Event Logger** from the dropdown menu at the top-right.
+  </Step>
+
+  <Step title="View Logged Events">
+    As you edit files, you'll see:
+    
+    ```
+    [1234567890] Logged an event: DID_CHANGE_TEXT_DOCUMENT
+    [1234567891] SENDING: 1 batched event(s) to Convex...
+    [1234567892] SUCCESS: 1 batched event(s) uploaded to Convex
+    ```
+  </Step>
+
+  <Step title="Check for Errors">
+    If events fail to upload, you'll see error messages:
+    
+    ```
+    [1234567893] ERROR: Failed to upload batched events - Network error
+    ```
+    
+    <Warning>
+      If you see repeated errors, check your internet connection and verify the Convex URL in settings.
+    </Warning>
+  </Step>
+</Steps>
+
+## When Tracking is Active
+
+Tracking is **active** when:
+
+1. The Leopard extension is installed and enabled
+2. You're working in a workspace launched through Leopard
+3. The extension successfully connected to the Convex backend
+4. You're editing text documents (not viewing output channels)
+
+### Extension Lifecycle
+
+The extension activates when VSCode starts:
+
+```typescript
+// From extension.ts:13-36
+export function activate(
+  context: vscode.ExtensionContext,
+  client?: ConvexHttpClient,
+  hostname?: string,
+) {
+  console.log('Congratulations, your extension "leopard" is now active!');
+  const channel = vscode.window.createOutputChannel("Leopard Event Logger");
+
+  const config = vscode.workspace.getConfiguration("leopard");
+  const convexUrl = config.get<string>("convexUrl") ?? "";
+  BatchedConvexHttpClient.init(
+    client ?? new ConvexHttpClient(convexUrl),
+    hostname ?? os.hostname(),
+    channel,
+    1000, // 1 second debounce
+  );
+
+  channel.appendLine(`[INIT] Leopard extension activated`);
+  channel.appendLine(`[INIT] Convex URL: ${convexUrl}`);
+  channel.appendLine(`[INIT] Hostname: ${hostname ?? os.hostname()}`);
+  channel.show();
+}
+```
+
+### Deactivation
+
+When VSCode closes, the extension flushes any remaining buffered events:
+
+```typescript
+// From extension.ts:167-169
+export async function deactivate() {
+  await BatchedConvexHttpClient.flushAndResetInstance();
+}
+```
+
+## Data Usage by Instructors
+
+Instructors use tracked data to:
+
+### Academic Integrity
+
+- Verify you wrote the code yourself
+- Detect unusual patterns (e.g., entire files appearing at once)
+- Compare work patterns between students
+
+### Learning Insights
+
+- Understand how students approach problems
+- Identify common mistakes or confusion points
+- Provide targeted feedback on your process
+
+### Assessment
+
+- Grade based on both the final code and the work process
+- Award partial credit for demonstrating problem-solving skills
+- Evaluate time spent and effort invested
+
+<Info>
+  The granular version history helps instructors verify the legitimacy of student work while providing valuable insights into your learning process.
+</Info>
+
+## Troubleshooting
+
+### No Events Being Logged
+
+If the Output panel shows no events:
+
+1. Verify the extension is activated (check for `[INIT]` messages)
+2. Make sure you're editing actual files (not output channels)
+3. Try reloading VSCode
+
+### Events Not Uploading
+
+If you see "SENDING" but not "SUCCESS" messages:
+
+1. Check your internet connection
+2. Verify the Convex URL is correct in settings
+3. Look for detailed error messages in the output
+4. Contact your instructor or IT support
+
+### Suspicious Activity Warnings
+
+If instructors contact you about unusual patterns:
+
+- Review the tracked events in your Output panel
+- Ensure you're not copy-pasting large amounts of code
+- Be prepared to explain your work process
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Setup Extension" icon="puzzle-piece" href="/students/setup-extension">
+    Review installation and configuration
+  </Card>
+  <Card title="Submit Assignments" icon="paper-plane" href="/students/submitting-assignments">
+    Learn the submission workflow
+  </Card>
+</CardGroup>

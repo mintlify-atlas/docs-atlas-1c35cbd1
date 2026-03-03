@@ -1,0 +1,334 @@
+---
+title: Next.js deployment
+description: Deploy the Leopard web application to production
+---
+
+The Leopard web application is built with Next.js 16 and provides dashboards for teachers and students to manage classrooms, assignments, and submissions.
+
+## Application structure
+
+The Next.js app lives in `apps/nextjs/`:
+
+```text
+apps/nextjs/
+├── src/
+│   ├── app/                  # App router pages
+│   │   ├── auth/            # Authentication flows
+│   │   ├── teacher/         # Teacher dashboard
+│   │   ├── student/         # Student dashboard
+│   │   ├── replay/          # Event replay viewer
+│   │   ├── live/            # Live event monitoring
+│   │   └── api/             # API routes
+│   ├── components/          # Shared React components
+│   ├── lib/                 # Utilities and helpers
+│   └── styles/              # Global styles
+├── public/                  # Static assets
+└── package.json
+```
+
+## Technology stack
+
+- **Next.js 16** - React framework with App Router
+- **React 19** - Latest React features
+- **Tailwind CSS v4** - Utility-first styling
+- **shadcn/ui** - Component library
+- **Tiptap** - Rich text editor for assignments
+- **Convex** - Backend integration
+- **Better Auth** - Authentication
+
+## Local development
+
+<Steps>
+  <Step title="Install dependencies">
+    From the monorepo root:
+    ```bash
+    pnpm install
+    ```
+  </Step>
+  
+  <Step title="Configure environment variables">
+    Create a `.env` file at the repository root:
+    ```bash
+    cp .env.example .env
+    ```
+    
+    Fill in the required values (see [Environment variables](/deployment/environment-variables)).
+  </Step>
+  
+  <Step title="Start Convex backend">
+    The backend must be running first:
+    ```bash
+    npx convex dev
+    ```
+  </Step>
+  
+  <Step title="Start Next.js dev server">
+    Run the development server:
+    ```bash
+    pnpm --filter @package/nextjs dev
+    ```
+    
+    Or from the root:
+    ```bash
+    pnpm dev
+    ```
+    
+    The app will be available at `http://localhost:3000`.
+  </Step>
+</Steps>
+
+## Deploy to Vercel
+
+Vercel is the recommended hosting platform for Next.js applications.
+
+<Steps>
+  <Step title="Connect repository">
+    1. Go to [vercel.com/new](https://vercel.com/new)
+    2. Import your Git repository
+    3. Select the repository containing Leopard
+  </Step>
+  
+  <Step title="Configure build settings">
+    Vercel's zero-config system should detect Next.js automatically. Verify these settings:
+    
+    - **Framework Preset**: Next.js
+    - **Root Directory**: `apps/nextjs`
+    - **Build Command**: `pnpm build` (or leave default)
+    - **Output Directory**: `.next` (default)
+    - **Install Command**: `pnpm install`
+  </Step>
+  
+  <Step title="Set environment variables">
+    Add all required environment variables in the Vercel dashboard:
+    
+    1. Go to **Project Settings** → **Environment Variables**
+    2. Add variables for all environments (Production, Preview, Development):
+    
+    ```bash
+    BETTER_AUTH_SECRET=<secure-random-string>
+    NEXT_PUBLIC_CONVEX_URL=https://your-prod-deployment.convex.cloud
+    NEXT_PUBLIC_CONVEX_SITE_URL=https://your-prod-deployment.convex.site
+    SITE_URL=https://yourdomain.vercel.app
+    AUTH_DISCORD_ID=<your-discord-app-id>
+    AUTH_DISCORD_SECRET=<your-discord-app-secret>
+    CODER_URL=https://coder.yourdomain.com/
+    ```
+    
+    <Warning>
+      Use the same `BETTER_AUTH_SECRET` in both Vercel and Convex environments.
+    </Warning>
+  </Step>
+  
+  <Step title="Deploy">
+    Click **Deploy**. Vercel will:
+    - Install dependencies with pnpm
+    - Build the Next.js application
+    - Deploy to global CDN
+    - Assign a production URL
+    
+    Subsequent commits to your main branch will trigger automatic deployments.
+  </Step>
+  
+  <Step title="Configure custom domain (optional)">
+    1. Go to **Project Settings** → **Domains**
+    2. Add your custom domain
+    3. Configure DNS records as instructed
+    4. Update `SITE_URL` environment variable to match your domain
+  </Step>
+</Steps>
+
+## Monorepo configuration
+
+For monorepo deployments, Vercel needs to know about workspace dependencies:
+
+### Vercel settings
+
+```json vercel.json (in apps/nextjs/)
+{
+  "buildCommand": "cd ../.. && pnpm turbo run build --filter=@package/nextjs...",
+  "installCommand": "cd ../.. && pnpm install"
+}
+```
+
+This ensures:
+- pnpm installs all workspace dependencies
+- Turborepo builds dependencies in the correct order
+- The Next.js app can import from workspace packages
+
+## OAuth configuration
+
+Configure OAuth redirect URLs for production:
+
+### Discord
+
+1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
+2. Select your application
+3. Navigate to **OAuth2** → **Redirects**
+4. Add redirect URL:
+   ```
+   https://yourdomain.com/api/auth/callback/discord
+   ```
+5. Save changes
+
+<Info>
+  Add both your production domain and preview deployment domains (e.g., `https://*.vercel.app`) for testing.
+</Info>
+
+## Environment-specific builds
+
+### Production
+
+Production builds use:
+- Minified JavaScript
+- Optimized images
+- Static generation where possible
+- Production Convex deployment
+
+### Preview
+
+Preview deployments (from pull requests) can use:
+- The same production Convex deployment, or
+- A separate "staging" Convex deployment
+
+Set preview-specific environment variables in Vercel.
+
+## Build optimization
+
+### Reduce bundle size
+
+The Next.js app uses code splitting and dynamic imports:
+
+```typescript
+// Lazy load heavy components
+const TiptapEditor = dynamic(() => import('@/components/TiptapEditor'), {
+  ssr: false,
+  loading: () => <Skeleton className="h-64" />,
+});
+```
+
+### Image optimization
+
+Use Next.js Image component for automatic optimization:
+
+```tsx
+import Image from 'next/image';
+
+<Image 
+  src="/avatar.png" 
+  alt="User" 
+  width={40} 
+  height={40}
+  className="rounded-full"
+/>
+```
+
+## Authentication flow
+
+The authentication flow uses Better Auth:
+
+1. User visits `/auth/signin`
+2. Selects OAuth provider (Discord)
+3. Redirects to provider for authorization
+4. Provider redirects back to `/api/auth/callback/discord`
+5. Better Auth creates/updates user session
+6. User redirected to dashboard
+
+See: [Authentication API](/api/auth/overview)
+
+## Monitoring
+
+### Vercel Analytics
+
+Enable analytics in the Vercel dashboard:
+- **Web Analytics** - Page views, visitor metrics
+- **Speed Insights** - Performance metrics, Core Web Vitals
+
+### Error tracking
+
+Consider integrating error tracking:
+- [Sentry](https://sentry.io) for exception monitoring
+- [LogRocket](https://logrocket.com) for session replay
+
+## Common deployment issues
+
+### Build fails with module not found
+
+Ensure workspace dependencies are installed:
+
+```bash
+# In vercel.json
+{
+  "installCommand": "cd ../.. && pnpm install"
+}
+```
+
+### Environment variables not available
+
+1. Check that variables are set in Vercel dashboard
+2. Verify variable names match exactly (case-sensitive)
+3. Restart the deployment after adding variables
+4. For client-side variables, ensure they start with `NEXT_PUBLIC_`
+
+### OAuth redirect errors
+
+1. Verify `SITE_URL` matches your deployment URL
+2. Add redirect URLs to OAuth provider dashboard
+3. Check that `BETTER_AUTH_SECRET` is set and matches Convex
+
+### Convex connection errors
+
+1. Verify `NEXT_PUBLIC_CONVEX_URL` is correct
+2. Ensure Convex deployment is running
+3. Check that Convex environment variables are set
+
+## Alternative hosting
+
+While Vercel is recommended, you can deploy to other platforms:
+
+### Docker
+
+Build a Docker image:
+
+```dockerfile Dockerfile
+FROM node:22-alpine AS base
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+RUN corepack enable
+
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/nextjs ./apps/nextjs
+COPY packages ./packages
+
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @package/nextjs build
+
+EXPOSE 3000
+CMD ["pnpm", "--filter", "@package/nextjs", "start"]
+```
+
+### VPS / Cloud VM
+
+Run on a Linux server:
+
+```bash
+# Install dependencies
+pnpm install
+
+# Build
+pnpm --filter @package/nextjs build
+
+# Start with PM2
+pm2 start "pnpm --filter @package/nextjs start" --name leopard
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Coder integration" icon="terminal" href="/deployment/coder-integration">
+    Configure student workspace provisioning
+  </Card>
+  <Card title="VSCode extension" icon="code" href="/extension/installation">
+    Package and distribute the extension
+  </Card>
+</CardGroup>

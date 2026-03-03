@@ -1,0 +1,132 @@
+---
+title: Event Tracking Overview
+description: Learn how Leopard tracks student activity in coding workspaces
+---
+
+## Overview
+
+Leopard tracks fine-grained coding activity through an event system that captures student interactions in their development workspaces. Events are sent from VS Code extensions and aggregated for academic integrity analysis.
+
+## Event System Architecture
+
+### Event Flow
+
+1. **VS Code Extension**: Captures editor events (text changes, file operations, etc.)
+2. **Batch Transmission**: Events are batched and sent to the API
+3. **Workspace Resolution**: Events are associated with student workspaces via hostname
+4. **Storage**: Events are stored with timestamps for replay and analysis
+
+### Event Schema
+
+```typescript schema.ts:26
+events: defineTable({
+  eventType: v.string(),
+  timestamp: v.number(),
+  workspaceId: v.id("workspaces"),
+  metadata: v.record(v.string(), v.any()),
+}).index("workspaceId_timestamp", ["workspaceId", "timestamp"])
+```
+
+<ResponseField name="eventType" type="string">
+  The type of event (e.g., "DID_CHANGE_TEXT_DOCUMENT", "FILE_CREATED")
+</ResponseField>
+
+<ResponseField name="timestamp" type="number">
+  Unix timestamp in milliseconds when the event occurred
+</ResponseField>
+
+<ResponseField name="workspaceId" type="Id<'workspaces'>">
+  Reference to the student's workspace where the event occurred
+</ResponseField>
+
+<ResponseField name="metadata" type="Record<string, any>">
+  Event-specific data (file paths, text changes, cursor positions, etc.)
+</ResponseField>
+
+## Event Types
+
+Leopard tracks various event types for comprehensive activity monitoring:
+
+### Text Document Events
+
+<ParamField path="DID_CHANGE_TEXT_DOCUMENT" type="event">
+  Captures text edits in files
+  
+  **Metadata fields:**
+  - `contentChanges`: Array of change objects
+  - `filePath`: Path to the modified file
+  - `range`: Start/end positions of the change
+  - `text`: The inserted or deleted text
+</ParamField>
+
+### Example Event
+
+```json
+{
+  "eventType": "DID_CHANGE_TEXT_DOCUMENT",
+  "timestamp": 1769638584411,
+  "metadata": {
+    "contentChanges": [
+      {
+        "filePath": "/workspace/main.py",
+        "range": {
+          "start": { "line": 0, "column": 8 },
+          "end": { "line": 0, "column": 8 }
+        },
+        "text": ":"
+      }
+    ]
+  }
+}
+```
+
+## Use Cases
+
+### Academic Integrity
+
+- **Plagiarism Detection**: Compare coding patterns across students
+- **Unauthorized Collaboration**: Identify similar event sequences
+- **Copy-Paste Detection**: Track large text insertions
+- **Workspace Switching**: Monitor suspicious activity patterns
+
+### Learning Analytics
+
+- **Time on Task**: Calculate active coding time
+- **Progress Tracking**: Visualize development timeline
+- **Struggle Detection**: Identify students who need help
+- **Code Evolution**: Replay student's coding process
+
+### Code Replay
+
+Events can be replayed chronologically to reconstruct the student's coding process:
+
+```typescript
+const events = await ctx.db
+  .query("events")
+  .withIndex("workspaceId_timestamp", (q) => 
+    q.eq("workspaceId", workspaceId)
+  )
+  .order("asc")
+  .collect();
+```
+
+## Privacy & Security
+
+<Warning>
+  Event data contains detailed information about student coding activity. Handle with appropriate access controls and in compliance with institutional privacy policies.
+</Warning>
+
+### Access Control
+
+- Events are accessible only to instructors of the associated classroom
+- Students cannot query events directly
+- Event data is associated with workspaces, not user accounts directly
+
+### Data Retention
+
+Events are retained for the duration of the course. Consider implementing data retention policies for compliance with educational privacy regulations (FERPA, GDPR, etc.).
+
+## Next Steps
+
+- [Workspace Events API](/api/events/workspace-events) - Learn how to submit and query workspace events
+- [Assignment Submissions](/api/assignment/submissions) - Link workspace activity to assignment submissions

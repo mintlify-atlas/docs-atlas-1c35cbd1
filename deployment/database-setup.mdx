@@ -1,0 +1,332 @@
+---
+title: Database setup
+description: Configure the Convex database schema and Better Auth integration
+---
+
+Leopard uses Convex as its primary database. The schema defines all tables, relationships, and indexes for the application.
+
+## Schema overview
+
+The database schema is defined in `packages/backend/convex/schema.ts` and includes the following tables:
+
+### Core tables
+
+<AccordionGroup>
+  <Accordion title="users">
+    Stores user metadata and role information.
+    
+    **Fields:**
+    - `uid` (string) - Maps to Better Auth user ID
+    - `role` ("admin" | "teacher" | "student") - User role
+    
+    **Indexes:**
+    - `uid` - For fast user lookups
+    
+    ```typescript packages/backend/convex/schema.ts
+    users: defineTable({
+      uid: v.string(),
+      role: v.union(
+        v.literal("admin"),
+        v.literal("student"), 
+        v.literal("teacher"),
+      )
+    }).index("uid", ["uid"]),
+    ```
+  </Accordion>
+  
+  <Accordion title="classrooms">
+    Stores classroom information and instructor assignments.
+    
+    **Fields:**
+    - `className` (string) - Display name
+    - `metadata` (string) - Additional information
+    - `ownerId` (string) - Teacher who created the classroom (Better Auth user ID)
+    - `assistantIds` (string[]) - Teaching assistants (Better Auth user IDs)
+    - `assignments` (Id[]) - Array of assignment IDs in this classroom
+    
+    ```typescript packages/backend/convex/schema.ts
+    classrooms: defineTable({
+      assignments: v.array(v.id("assignments")),
+      className: v.string(),
+      metadata: v.string(),
+      ownerId: v.string(),
+      assistantIds: v.array(v.string()),
+    }),
+    ```
+  </Accordion>
+  
+  <Accordion title="classroomStudentsRelations">
+    Many-to-many relationship between classrooms and students.
+    
+    **Fields:**
+    - `classroomId` (Id) - Reference to classroom
+    - `studentId` (string) - Better Auth user ID
+    
+    **Indexes:**
+    - `studentId_classroomId` - For finding classrooms by student
+    - `classroomId_studentId` - For finding students by classroom
+    
+    ```typescript packages/backend/convex/schema.ts
+    classroomStudentsRelations: defineTable({
+      classroomId: v.id("classrooms"),
+      studentId: v.string(),
+    })
+    .index("studentId_classroomId", ["studentId", "classroomId"])
+    .index("classroomId_studentId", ["classroomId", "studentId"]),
+    ```
+  </Accordion>
+  
+  <Accordion title="assignments">
+    Stores assignment details and configuration.
+    
+    **Fields:**
+    - `classroomId` (Id) - Parent classroom
+    - `name` (string) - Assignment title
+    - `description` (string, optional) - Assignment details
+    - `releaseDate` (number) - Unix timestamp when assignment becomes visible
+    - `dueDate` (number) - Unix timestamp for deadline
+    - `workspaceConfig` (record, optional) - Coder workspace configuration
+    
+    **Indexes:**
+    - `classroomId` - For listing assignments by classroom
+    
+    ```typescript packages/backend/convex/schema.ts
+    assignments: defineTable({
+      classroomId: v.id("classrooms"),
+      description: v.optional(v.string()),
+      dueDate: v.number(),
+      name: v.string(),
+      releaseDate: v.number(),
+      workspaceConfig: v.optional(v.record(v.string(), v.any())),
+    }).index("classroomId", ["classroomId"]),
+    ```
+  </Accordion>
+  
+  <Accordion title="submissions">
+    Tracks student assignment submissions and grading.
+    
+    **Fields:**
+    - `assignmentId` (Id) - Reference to assignment
+    - `studentId` (string) - Better Auth user ID
+    - `workspaceId` (Id, optional) - Reference to workspace
+    - `submittedAt` (number) - Unix timestamp of submission
+    - `grade` (number, optional) - Numeric grade
+    - `submissionFeedback` (string, optional) - Instructor comments
+    - `gradedBy` (string, optional) - Better Auth user ID of grader
+    - `gradedAt` (number, optional) - Unix timestamp when graded
+    - `gradesReleased` (boolean) - Whether student can see the grade
+    - `flags` (Id[]) - Array of flag IDs for suspicious activity
+    
+    **Indexes:**
+    - `studentId_assignmentId` - For finding submissions by student
+    - `assignmentId_studentId` - For finding submissions by assignment
+    
+    ```typescript packages/backend/convex/schema.ts
+    submissions: defineTable({
+      assignmentId: v.id("assignments"),
+      flags: v.array(v.id("flags")),
+      grade: v.optional(v.float64()),
+      studentId: v.string(),
+      submissionFeedback: v.optional(v.string()),
+      workspaceId: v.optional(v.id("workspaces")),
+      submittedAt: v.number(),
+      gradedBy: v.optional(v.string()),
+      gradedAt: v.optional(v.number()),
+      gradesReleased: v.boolean(),
+    })
+    .index("studentId_assignmentId", ["studentId", "assignmentId"])
+    .index("assignmentId_studentId", ["assignmentId", "studentId"]),
+    ```
+  </Accordion>
+  
+  <Accordion title="workspaces">
+    Links Coder workspaces to Leopard users.
+    
+    **Fields:**
+    - `coderWorkspaceId` (string) - Coder's workspace identifier
+    - `userId` (string) - Better Auth user ID
+    - `isActive` (boolean) - Whether workspace is currently running
+    
+    **Indexes:**
+    - `coderWorkspaceId` - For looking up workspaces by Coder ID
+    - `userId_isActive` - For finding active workspaces by user
+    
+    ```typescript packages/backend/convex/schema.ts
+    workspaces: defineTable({
+      coderWorkspaceId: v.string(),
+      isActive: v.boolean(),
+      userId: v.string(),
+    })
+    .index("coderWorkspaceId", ["coderWorkspaceId"])
+    .index("userId_isActive", ["userId", "isActive"]),
+    ```
+  </Accordion>
+  
+  <Accordion title="events">
+    Stores IDE event tracking data from the VSCode extension.
+    
+    **Fields:**
+    - `workspaceId` (Id) - Reference to workspace
+    - `eventType` (string) - Event identifier (e.g., "DID_CHANGE_TEXT_DOCUMENT")
+    - `timestamp` (number) - Unix timestamp in milliseconds
+    - `metadata` (record) - Event-specific data (file path, changes, etc.)
+    
+    **Indexes:**
+    - `workspaceId_timestamp` - For chronological event queries
+    
+    ```typescript packages/backend/convex/schema.ts
+    events: defineTable({
+      eventType: v.string(),
+      timestamp: v.number(),
+      workspaceId: v.id("workspaces"),
+      metadata: v.record(v.string(), v.any()),
+    }).index("workspaceId_timestamp", ["workspaceId", "timestamp"]),
+    ```
+  </Accordion>
+  
+  <Accordion title="flags">
+    Marks suspicious activity patterns for review.
+    
+    **Fields:**
+    - `type` (string) - Flag category (e.g., "suspicious_paste", "rapid_completion")
+    - `description` (string) - Human-readable explanation
+    - `timestamp` (number) - When flag was created
+    
+    ```typescript packages/backend/convex/schema.ts
+    flags: defineTable({
+      description: v.string(),
+      timestamp: v.number(),
+      type: v.string(),
+    }),
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Better Auth schema
+
+Better Auth manages authentication tables automatically. You must generate the schema before deploying:
+
+<Steps>
+  <Step title="Install dependencies">
+    Ensure all packages are installed:
+    ```bash
+    pnpm install
+    ```
+  </Step>
+  
+  <Step title="Generate Better Auth schema">
+    Run the Better Auth CLI to generate authentication tables:
+    ```bash
+    pnpm --filter @package/auth generate
+    ```
+    
+    This creates `packages/db/src/auth-schema.ts` with Drizzle schema definitions for:
+    - User accounts
+    - Sessions
+    - Verification tokens
+    - OAuth accounts
+  </Step>
+  
+  <Step title="Verify schema generation">
+    Check that the schema file was created:
+    ```bash
+    ls -la packages/db/src/auth-schema.ts
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  The Better Auth CLI configuration is isolated in `packages/auth/script/auth-cli.ts` to prevent accidental imports. Use the runtime configuration from `packages/auth/src/index.ts` in your application code.
+</Note>
+
+## Deploying the schema
+
+Convex automatically deploys your schema when you push your functions:
+
+<CodeGroup>
+```bash Development
+# Start Convex in dev mode (auto-deploys schema changes)
+npx convex dev
+```
+
+```bash Production
+# Deploy to production
+npx convex deploy
+```
+</CodeGroup>
+
+Convex will:
+1. Validate your schema definitions
+2. Create missing tables
+3. Add new indexes
+4. Migrate data if needed
+
+<Warning>
+  Schema changes in production should be tested in a dev environment first. Convex handles migrations automatically, but breaking changes can affect running code.
+</Warning>
+
+## Relationships and indexes
+
+Leopard uses several relationship patterns:
+
+### One-to-many
+
+- Classroom → Assignments (via `assignments` array)
+- Assignment → Submissions (via `assignmentId` index)
+- Workspace → Events (via `workspaceId_timestamp` index)
+
+### Many-to-many
+
+- Classrooms ↔ Students (via `classroomStudentsRelations` join table)
+
+### Indexes for performance
+
+All foreign key relationships have indexes for efficient queries:
+
+- `classroomStudentsRelations`: Bi-directional indexes for both lookup directions
+- `submissions`: Indexes for finding by student and by assignment
+- `events`: Composite index on `workspaceId` and `timestamp` for chronological queries
+- `workspaces`: Index on `userId` and `isActive` for finding active workspaces
+
+## Data migration
+
+When updating the schema:
+
+1. **Additive changes** (new tables, new fields) are safe and automatic
+2. **Renaming fields** requires a migration:
+   ```typescript
+   // In a Convex migration
+   await ctx.db.patch(doc._id, { 
+     newFieldName: doc.oldFieldName 
+   });
+   ```
+3. **Deleting fields** should be done carefully:
+   - Remove code references first
+   - Deploy the code change
+   - Then remove the field from the schema
+
+<Info>
+  Convex keeps old field data even if you remove it from the schema. This provides a safety net for rollbacks.
+</Info>
+
+## Database backups
+
+Convex automatically backs up your data. You can export data via:
+
+```bash
+# Export all data to JSON
+npx convex export
+```
+
+Or use the Convex dashboard to download snapshots.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Convex backend" icon="server" href="/deployment/convex-backend">
+    Deploy your Convex functions
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/auth/overview">
+    Explore the API endpoints
+  </Card>
+</CardGroup>

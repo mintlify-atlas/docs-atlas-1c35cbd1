@@ -1,0 +1,555 @@
+---
+title: Assignment Submissions
+description: Submit, grade, and manage assignment submissions
+---
+
+## Submit Assignment
+
+Submit or resubmit an assignment as a student.
+
+<CodeGroup>
+```typescript Mutation
+import { api } from "./_generated/api";
+import { useMutation } from "convex/react";
+
+const submitAssignment = useMutation(api.web.submission.submitAssignment);
+const result = await submitAssignment({
+  assignmentId: "assignment_123",
+  workspaceId: "workspace_abc"
+});
+```
+
+```typescript Response
+{
+  submissionId: "submission_xyz789"
+}
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/submission.ts:39
+export const submitAssignment = mutation({
+  args: {
+    assignmentId: v.id("assignments"),
+    workspaceId: v.id("workspaces"),
+  },
+  handler: async (ctx, args) => {
+    const user = await checkAuth(ctx);
+    await requireStudentRole(ctx, user._id);
+
+    // check assignment exists
+    const assignment = await ctx.db.get(args.assignmentId);
+    if (!assignment) {
+      throw new Error("Assignment not found");
+    }
+
+    // Check if user is enrolled in the classroom
+    const classroomId = assignment.classroomId;
+    const relation = await ctx.db
+      .query("classroomStudentsRelations")
+      .withIndex("studentId_classroomId", (q) =>
+        q.eq("studentId", user._id).eq("classroomId", classroomId),
+      )
+      .first();
+
+    if (!relation) {
+      throw new Error("User not enrolled in the classroom");
+    }
+
+    //Due date check
+    const currentTime = Date.now();
+    if (currentTime > assignment.dueDate) {
+      throw new Error("Cannot submit after the due date");
+    }
+
+    // Check if submission already exists
+    const existingSubmission = await ctx.db
+      .query("submissions")
+      .withIndex("studentId_assignmentId", q =>
+        q.eq("studentId", user._id).eq("assignmentId", args.assignmentId)
+      )
+      .first();
+
+    if (existingSubmission) {
+      await ctx.db.patch(existingSubmission._id, {
+        workspaceId: args.workspaceId,
+        submittedAt: Date.now(),
+      });
+      return { submissionId: existingSubmission._id };
+    }
+
+    // New submission
+    const submissionId = await ctx.db.insert("submissions", {
+      assignmentId: args.assignmentId,
+      flags: [],
+      studentId: user._id,
+      workspaceId: args.workspaceId,
+      submittedAt: Date.now(),
+      gradesReleased: false,
+    });
+
+    return { submissionId };
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="assignmentId" type="Id<'assignments'>" required>
+  The assignment being submitted
+</ParamField>
+
+<ParamField path="workspaceId" type="Id<'workspaces'>" required>
+  The workspace containing the student's code
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be authenticated as a student enrolled in the classroom
+</ParamField>
+
+### Behavior
+
+- **First submission**: Creates a new submission record
+- **Resubmission**: Updates the existing submission's `workspaceId` and `submittedAt` timestamp
+- **Due date enforcement**: Submissions after the due date are rejected
+- **Enrollment check**: Only enrolled students can submit
+
+### Return Type
+
+<ResponseField name="submissionId" type="Id<'submissions'>">
+  The ID of the created or updated submission
+</ResponseField>
+
+### Errors
+
+<ResponseField name="Not authenticated" type="error">
+  User is not authenticated
+</ResponseField>
+
+<ResponseField name="Only students can submit..." type="error">
+  User does not have student role
+</ResponseField>
+
+<ResponseField name="Assignment not found" type="error">
+  Assignment ID does not exist
+</ResponseField>
+
+<ResponseField name="User not enrolled in the classroom" type="error">
+  Student is not enrolled in the assignment's classroom
+</ResponseField>
+
+<ResponseField name="Cannot submit after the due date" type="error">
+  Submission attempted after assignment due date
+</ResponseField>
+
+---
+
+## Get Own Submission
+
+Retrieve a student's own submission for an assignment.
+
+<CodeGroup>
+```typescript Query
+import { api } from "./_generated/api";
+import { useQuery } from "convex/react";
+
+const submission = useQuery(api.web.submission.getOwnSubmissionsForAssignment, {
+  assignmentId: "assignment_123"
+});
+```
+
+```typescript Response (grades not released)
+{
+  success: true,
+  submission: {
+    _id: "submission_xyz",
+    workspaceId: "workspace_abc",
+    studentId: "user_123",
+    assignmentId: "assignment_123",
+    submittedAt: 1704153600000,
+    gradesReleased: false
+  }
+}
+```
+
+```typescript Response (grades released)
+{
+  success: true,
+  submission: {
+    _id: "submission_xyz",
+    workspaceId: "workspace_abc",
+    studentId: "user_123",
+    assignmentId: "assignment_123",
+    submittedAt: 1704153600000,
+    grade: 95.5,
+    submissionFeedback: "Excellent work! Consider edge cases.",
+    flags: [],
+    gradedBy: "user_teacher1",
+    gradedAt: 1704240000000,
+    gradesReleased: true
+  }
+}
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/submission.ts:147
+export const getOwnSubmissionsForAssignment = query({
+  args: {
+    assignmentId: v.id("assignments"),
+  },
+  handler: async (ctx, args) => {
+    const user = await checkAuth(ctx);
+    await requireStudentRole(ctx, user._id);
+
+    const submission = await ctx.db
+      .query("submissions")
+      .withIndex("studentId_assignmentId", q =>
+        q.eq("studentId", user._id).eq("assignmentId", args.assignmentId)
+      )
+      .first();
+
+    if (!submission){
+      return {success: false}
+    }
+
+    if (submission.gradesReleased){
+      return {success: true, submission: submission}
+    }
+
+    const publicSubmissionInfo = {
+      _id: submission._id,
+      workspaceId: submission.workspaceId,
+      studentId: submission.studentId,
+      assignmentId: submission.assignmentId,
+      submittedAt: submission.submittedAt,
+      gradesReleased: submission.gradesReleased
+    }
+
+    return {success: true, submission: publicSubmissionInfo};
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="assignmentId" type="Id<'assignments'>" required>
+  The assignment to check for submissions
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be authenticated as a student
+</ParamField>
+
+### Behavior
+
+- **No submission**: Returns `{ success: false }`
+- **Grades not released**: Returns only public fields (no grade or feedback)
+- **Grades released**: Returns complete submission with grade and feedback
+
+### Return Type
+
+<ResponseField name="success" type="boolean">
+  Whether a submission was found
+</ResponseField>
+
+<ResponseField name="submission" type="object | undefined">
+  The submission object if found. Fields depend on `gradesReleased` status.
+</ResponseField>
+
+---
+
+## Get All Submissions (Instructor)
+
+Retrieve all submissions for an assignment. Instructor access only.
+
+<CodeGroup>
+```typescript Query
+import { api } from "./_generated/api";
+import { useQuery } from "convex/react";
+
+const submissions = useQuery(api.web.submission.getAllSubmissionsForAssignment, {
+  assignmentId: "assignment_123"
+});
+```
+
+```typescript Response
+[
+  {
+    _id: "submission_1",
+    assignmentId: "assignment_123",
+    studentId: "user_student1",
+    workspaceId: "workspace_1",
+    submittedAt: 1704153600000,
+    grade: 95.5,
+    submissionFeedback: "Great work!",
+    flags: [],
+    gradedBy: "user_teacher1",
+    gradedAt: 1704240000000,
+    gradesReleased: true
+  },
+  {
+    _id: "submission_2",
+    assignmentId: "assignment_123",
+    studentId: "user_student2",
+    workspaceId: "workspace_2",
+    submittedAt: 1704067200000,
+    flags: ["flag_1"],
+    gradesReleased: false
+  }
+]
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/submission.ts:182
+export const getAllSubmissionsForAssignment = query({
+  args: {
+    assignmentId: v.id("assignments"),
+  },
+  handler: async (ctx, args) => {
+    const user = await checkAuth(ctx);
+
+    await checkGraderAccess(user._id, ctx, args.assignmentId);
+
+    const submissions = await ctx.db
+      .query("submissions")
+      .withIndex("assignmentId_studentId", q =>
+        q.eq("assignmentId", args.assignmentId)
+      )
+      .collect();
+    return submissions;
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="assignmentId" type="Id<'assignments'>" required>
+  The assignment to retrieve submissions for
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be an instructor (owner or assistant) for the classroom
+</ParamField>
+
+### Return Type
+
+Array of complete submission objects including all fields.
+
+---
+
+## Grade Submission
+
+Assign a numeric grade to a submission.
+
+<CodeGroup>
+```typescript Mutation
+import { api } from "./_generated/api";
+import { useMutation } from "convex/react";
+
+const gradeSubmission = useMutation(api.web.submission.gradeSubmission);
+await gradeSubmission({
+  submissionId: "submission_xyz",
+  grade: 95.5
+});
+```
+
+```typescript Response
+{
+  success: true
+}
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/submission.ts:103
+export const gradeSubmission = mutation({
+  args: {
+    submissionId: v.id("submissions"),
+    grade: v.float64(),
+  },
+  handler: async (ctx, args) => {
+    const user = await checkAuth(ctx);
+
+    const submission = await ctx.db.get(args.submissionId);
+    if (!submission) {
+      throw new Error("Submission not found");
+    }
+
+    await checkGraderAccess(user._id, ctx, submission.assignmentId);
+
+    await ctx.db.patch(args.submissionId, {
+      grade: args.grade,
+      gradedBy: user._id,
+      gradedAt: Date.now(),
+    });
+    return { success: true };
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="submissionId" type="Id<'submissions'>" required>
+  The submission to grade
+</ParamField>
+
+<ParamField path="grade" type="number" required>
+  The numeric grade (float64)
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be an instructor for the assignment's classroom
+</ParamField>
+
+### Behavior
+
+- Sets the `grade` field
+- Records `gradedBy` as the current user
+- Sets `gradedAt` to current timestamp
+- Does not automatically release grades to students
+
+---
+
+## Provide Feedback
+
+Add written feedback to a submission.
+
+<CodeGroup>
+```typescript Mutation
+import { api } from "./_generated/api";
+import { useMutation } from "convex/react";
+
+const provideFeedback = useMutation(api.web.submission.provideSubmissionFeedback);
+await provideFeedback({
+  submissionId: "submission_xyz",
+  feedback: "Excellent implementation! Consider adding more edge case handling."
+});
+```
+
+```typescript Response
+{
+  success: true
+}
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/submission.ts:126
+export const provideSubmissionFeedback = mutation({
+  args: {
+    submissionId: v.id("submissions"),
+    feedback: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const user = await checkAuth(ctx);
+
+    const submission = await ctx.db.get(args.submissionId);
+    if (!submission) {
+      throw new Error("Submission not found");
+    }
+
+    await checkGraderAccess(user._id, ctx, submission.assignmentId);
+
+    await ctx.db.patch(args.submissionId, {
+      submissionFeedback: args.feedback,
+    });
+    return { success: true };
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="submissionId" type="Id<'submissions'>" required>
+  The submission to add feedback to
+</ParamField>
+
+<ParamField path="feedback" type="string" required>
+  The feedback text (supports markdown)
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be an instructor for the assignment's classroom
+</ParamField>
+
+---
+
+## Submission Schema
+
+### Database Schema
+
+```typescript schema.ts:37
+submissions: defineTable({
+  assignmentId: v.id("assignments"),
+  flags: v.array(v.id("flags")),
+  grade: v.optional(v.float64()),
+  studentId: v.string(),
+  submissionFeedback: v.optional(v.string()),
+  workspaceId: v.optional(v.id("workspaces")),
+  submittedAt: v.number(),
+  gradedBy: v.optional(v.string()),
+  gradedAt: v.optional(v.number()),
+  gradesReleased: v.boolean(),
+})
+  .index("studentId_assignmentId", ["studentId", "assignmentId"])
+  .index("assignmentId_studentId", ["assignmentId", "studentId"])
+```
+
+### Field Descriptions
+
+<ResponseField name="assignmentId" type="Id<'assignments'>">
+  Reference to the assignment
+</ResponseField>
+
+<ResponseField name="studentId" type="string">
+  User ID of the student (maps to Better Auth user ID)
+</ResponseField>
+
+<ResponseField name="workspaceId" type="Id<'workspaces'> | undefined">
+  Reference to the workspace containing the submitted code
+</ResponseField>
+
+<ResponseField name="submittedAt" type="number">
+  Unix timestamp (ms) when submission was made
+</ResponseField>
+
+<ResponseField name="grade" type="number | undefined">
+  Numeric grade (float64)
+</ResponseField>
+
+<ResponseField name="submissionFeedback" type="string | undefined">
+  Written feedback from instructor
+</ResponseField>
+
+<ResponseField name="gradedBy" type="string | undefined">
+  User ID of instructor who graded the submission
+</ResponseField>
+
+<ResponseField name="gradedAt" type="number | undefined">
+  Unix timestamp (ms) when graded
+</ResponseField>
+
+<ResponseField name="gradesReleased" type="boolean">
+  Whether grades are visible to students
+</ResponseField>
+
+<ResponseField name="flags" type="Id<'flags'>[]">
+  Array of academic integrity flag IDs
+</ResponseField>

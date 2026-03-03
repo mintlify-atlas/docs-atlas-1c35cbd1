@@ -1,0 +1,285 @@
+---
+title: Managing Classrooms
+description: Learn how to create and manage classrooms in Leopard
+---
+
+As a teacher, classrooms are the foundation of your work in Leopard. Each classroom contains assignments, enrolled students, and optional teaching assistants.
+
+## Creating a Classroom
+
+Create a new classroom to organize your students and assignments.
+
+<Steps>
+  <Step title="Navigate to Create Classroom">
+    From the teacher dashboard, click "New Classroom" or navigate to `/teacher/classroom/new`.
+  </Step>
+  
+  <Step title="Enter Classroom Details">
+    Provide a descriptive name for your classroom:
+    
+    ```tsx
+    // From: apps/nextjs/src/app/teacher/classroom/new/page.tsx:35-37
+    const classroomId = await createClassroom({
+      className: className.trim(),
+    });
+    ```
+  </Step>
+  
+  <Step title="Classroom Created">
+    Your classroom is created with the following structure:
+    
+    ```typescript
+    // From: packages/backend/convex/web/teacher.ts:126-145
+    {
+      className: "Intro to Systems",
+      metadata: "{}",
+      ownerId: user._id,        // Your user ID
+      assistantIds: [],          // TAs you add later
+      assignments: []            // Assignments you create
+    }
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  The teacher who creates a classroom becomes its owner with full permissions.
+</Note>
+
+## Managing Student Enrollment
+
+Leopard uses a self-enrollment system where students can join classrooms directly.
+
+### Viewing Enrolled Students
+
+Access the classroom detail page to see all enrolled students:
+
+```typescript
+// From: packages/backend/convex/web/teacher.ts:67-109
+const classroomDetails = await getClassroomDetails({
+  classroomId: "classroom_id"
+});
+
+// Returns:
+{
+  classroom: { /* classroom data */ },
+  assignments: [ /* assignment list */ ],
+  enrolledStudents: [
+    {
+      _id: "relation_id",
+      studentId: "user_id",
+      studentName: "John Doe",
+      studentEmail: "student@example.com",
+      _creationTime: 1234567890
+    }
+  ],
+  studentCount: 25,
+  pendingEnrollments: []
+}
+```
+
+### How Students Enroll
+
+Students self-enroll using the classroom enrollment API:
+
+```typescript
+// From: packages/backend/convex/web/classroom.ts:79-110
+await enroll({
+  classroomId: "classroom_id"
+});
+
+// Creates a relationship:
+{
+  classroomId: "classroom_id",
+  studentId: "user_id"
+}
+```
+
+The system automatically:
+- Checks for duplicate enrollments
+- Creates a `classroomStudentsRelations` entry
+- Grants the student access to classroom assignments
+
+### Removing Students
+
+Remove a student from your classroom when needed:
+
+```typescript
+// From: packages/backend/convex/web/teacher.ts:255-277
+await removeStudent({
+  classroomId: "classroom_id",
+  studentId: "student_user_id"
+});
+```
+
+<Warning>
+  Removing a student does not delete their submissions. Their work remains in the system for grading and record-keeping.
+</Warning>
+
+## Adding Teaching Assistants
+
+Add TAs to help manage your classroom. TAs can view submissions, grade work, and manage students.
+
+### Adding TAs to a Classroom
+
+```typescript
+// From: packages/backend/convex/web/teacher.ts:148-173
+await updateClassroom({
+  classroomId: "classroom_id",
+  assistantIds: ["ta_user_id_1", "ta_user_id_2"]
+});
+```
+
+### TA Permissions
+
+Teaching assistants have most instructor capabilities:
+
+```typescript
+// From: packages/backend/convex/web/teacher.ts:10-31
+const isOwner = classroom.ownerId === userId;
+const isAssistant = classroom.assistantIds.includes(userId);
+
+// TAs can:
+// - View all students and submissions
+// - Grade assignments
+// - Provide feedback
+// - Add/remove students
+// - Create flags on submissions
+
+// Only owners can:
+// - Delete the classroom
+// - Modify TA list
+```
+
+<Note>
+  TAs must have a teacher or admin role in Leopard. Student accounts cannot be added as assistants.
+</Note>
+
+## Classroom Dashboard
+
+Your classroom detail page shows:
+
+<CodeGroup>
+```tsx Overview Cards
+// From: apps/nextjs/src/app/teacher/classroom/[id]/page.tsx:109-128
+<div className="grid gap-3 md:grid-cols-3">
+  <Card>
+    <CardHeader>
+      <CardDescription>Assignments</CardDescription>
+      <CardTitle>{assignments.length}</CardTitle>
+    </CardHeader>
+  </Card>
+  <Card>
+    <CardHeader>
+      <CardDescription>Enrolled Students</CardDescription>
+      <CardTitle>{studentCount}</CardTitle>
+    </CardHeader>
+  </Card>
+  <Card>
+    <CardHeader>
+      <CardDescription>Pending Enrollments</CardDescription>
+      <CardTitle>{pendingEnrollments.length}</CardTitle>
+    </CardHeader>
+  </Card>
+</div>
+```
+
+```tsx Assignment List
+// From: apps/nextjs/src/app/teacher/classroom/[id]/page.tsx:144-181
+<table>
+  <thead>
+    <tr>
+      <th>Assignment</th>
+      <th>Due</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {assignments.map((assignment) => (
+      <tr key={assignment._id}>
+        <td>{assignment.name}</td>
+        <td>{new Date(assignment.dueDate).toLocaleString()}</td>
+        <td>
+          <Button asChild variant="outline">
+            <Link href={`/teacher/classroom/${classroomId}/assignment/${assignment._id}`}>
+              Open
+            </Link>
+          </Button>
+        </td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+```
+
+```tsx Student List
+// From: apps/nextjs/src/app/teacher/classroom/[id]/page.tsx:199-250
+<table>
+  <thead>
+    <tr>
+      <th>Student</th>
+      <th>Email</th>
+      <th>Joined</th>
+      <th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {enrolledStudents.map((enrollment) => (
+      <tr key={enrollment._id}>
+        <td>
+          <p>{enrollment.studentName ?? enrollment.studentEmail?.split("@")[0]}</p>
+          <p className="font-mono text-xs">{enrollment.studentId}</p>
+        </td>
+        <td>{enrollment.studentEmail ?? "No email available"}</td>
+        <td>{new Date(enrollment._creationTime).toLocaleString()}</td>
+        <td>
+          <Button onClick={() => handleRemoveStudent(enrollment.studentId)}>
+            Remove
+          </Button>
+        </td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+```
+</CodeGroup>
+
+## Deleting a Classroom
+
+Deleting a classroom is permanent and cascades to all related data:
+
+```typescript
+// From: packages/backend/convex/web/teacher.ts:175-218
+await deleteClassroom({
+  classroomId: "classroom_id"
+});
+
+// Automatically deletes:
+// 1. All student enrollment relations
+// 2. All assignments in the classroom
+// 3. All submissions for those assignments
+// 4. All flags on those submissions
+```
+
+<Warning>
+  Deleting a classroom cannot be undone. All assignments, submissions, and grades will be permanently removed.
+</Warning>
+
+## Schema Reference
+
+```typescript
+// From: packages/backend/convex/schema.ts:13-19
+classrooms: {
+  assignments: Id<"assignments">[],
+  className: string,
+  metadata: string,
+  ownerId: string,              // Better Auth user ID
+  assistantIds: string[]        // Better Auth user IDs
+}
+
+// From: packages/backend/convex/schema.ts:20-25
+classroomStudentsRelations: {
+  classroomId: Id<"classrooms">,
+  studentId: string             // Better Auth user ID
+}
+// Indexed by: studentId_classroomId, classroomId_studentId
+```

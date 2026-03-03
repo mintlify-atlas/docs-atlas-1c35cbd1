@@ -1,0 +1,175 @@
+---
+title: Features
+description: Understand what the Leopard VSCode extension tracks and how it captures coding activity
+---
+
+The Leopard VSCode extension monitors your coding activity to build a granular version history of your work process. This helps instructors verify the authenticity of student assignments.
+
+## Event Tracking
+
+The extension captures specific coding events and sends them to the Leopard backend for analysis.
+
+### Text Document Changes
+
+The primary event tracked is `onDidChangeTextDocument`, which captures every edit made to files in your workspace.
+
+**What's Captured**:
+- Timestamp of each change
+- File path
+- Exact range of text modified (line and column numbers)
+- New text content inserted
+
+**Example Event**:
+
+```json
+{
+  "timestamp": 1709481234567,
+  "eventType": "onDidChangeTextDocument",
+  "metadata": {
+    "contentChanges": [
+      {
+        "range": {
+          "start": { "line": 42, "column": 8 },
+          "end": { "line": 42, "column": 20 }
+        },
+        "text": "newFunction()",
+        "filePath": "/Users/student/assignment/src/main.ts"
+      }
+    ]
+  }
+}
+```
+
+This event shows that on line 42, columns 8-20 were replaced with `newFunction()`.
+
+### Event Batching
+
+To optimize network usage, the extension batches events before sending them to the backend:
+
+- Events are collected in a buffer
+- After 1000ms of inactivity (debounce delay), the batch is sent
+- Multiple events are sent together in a single request
+- Failed sends are automatically retried
+
+**Batch Example Output**:
+
+```
+[1709481234567] Logged an event: onDidChangeTextDocument
+[1709481234890] Logged an event: onDidChangeTextDocument
+[1709481235123] SENDING: 2 batched event(s) to Convex...
+[1709481235456] SUCCESS: 2 batched event(s) uploaded to Convex
+```
+
+## Event Logger Output Channel
+
+The extension creates a dedicated Output channel called **Leopard Event Logger** where you can monitor all activity in real-time.
+
+### Viewing the Event Logger
+
+<Steps>
+  <Step title="Open Output Panel">
+    Go to `View > Output` or press `Cmd+Shift+U` (macOS) / `Ctrl+Shift+U` (Windows/Linux)
+  </Step>
+
+  <Step title="Select Event Logger">
+    In the dropdown menu on the right, select **Leopard Event Logger**
+  </Step>
+
+  <Step title="Monitor Events">
+    You'll see a live stream of events as you code:
+
+    ```
+    [INIT] Leopard extension activated
+    [INIT] Convex URL: https://optimistic-kangaroo-331.convex.cloud
+    [INIT] Hostname: student-macbook
+    [1709481234567] Logged an event: onDidChangeTextDocument
+    [1709481235123] SENDING: 1 batched event(s) to Convex...
+    [1709481235456] SUCCESS: 1 batched event(s) uploaded to Convex
+    ```
+  </Step>
+</Steps>
+
+### Output Messages
+
+The event logger displays several types of messages:
+
+| Message Type | Example | Description |
+|-------------|---------|-------------|
+| `[INIT]` | `[INIT] Leopard extension activated` | Extension initialization messages |
+| `Logged an event` | `[timestamp] Logged an event: onDidChangeTextDocument` | Individual event logged to buffer |
+| `SENDING` | `SENDING: 5 batched event(s) to Convex...` | Batch being sent to backend |
+| `SUCCESS` | `SUCCESS: 5 batched event(s) uploaded` | Batch successfully uploaded |
+| `ERROR` | `ERROR: Failed to upload batched events - Network error` | Upload failed (events will be retried) |
+
+<Note>
+  If you see frequent `ERROR` messages, check your internet connection and verify the Convex URL is correct in your settings.
+</Note>
+
+## Future Events (Not Yet Implemented)
+
+The extension codebase includes placeholders for additional events that may be tracked in future versions:
+
+- `onDidOpenTextDocument` - File open events
+- `onDidCloseTextDocument` - File close events
+- `onDidCreateFiles` - New file creation
+- `onDidDeleteFiles` - File deletion
+- `onDidRenameFiles` - File renames
+- `onDidSaveTextDocument` - File save events
+- `onDidAcceptCopy` - Copy/paste operations (tracked in [issue #60](https://github.com/Beanie-Brick-Band/leopard/issues/60))
+- `onDidEndTerminalShellExecution` - Terminal command execution (tracked in [issue #62](https://github.com/Beanie-Brick-Band/leopard/issues/62))
+
+These events are commented out in the source code (extension.ts:38-163) but may be enabled as the platform evolves.
+
+## Privacy and Data Handling
+
+### What's Collected
+
+- **Code content**: The actual text you type in your files
+- **File paths**: Absolute paths to files you edit
+- **Timestamps**: When each change occurs
+- **Hostname**: Your computer's hostname for session identification
+
+### What's NOT Collected
+
+- Keyboard input outside VS Code
+- Browser history or other applications
+- Personal files outside your workspace
+- Output channel content (including the Leopard Event Logger itself)
+
+### How Data is Used
+
+The collected data is sent to your institution's Convex backend where it's used to:
+
+- Build a timeline of your coding process
+- Verify the authenticity of your work
+- Help instructors understand your development approach
+- Detect potential academic integrity violations
+
+<Note>
+  The extension ignores changes to output channels (scheme: `output`) to prevent logging its own messages or other diagnostic output.
+</Note>
+
+## Technical Details
+
+### Activation
+
+The extension activates on VS Code startup (`onStartupFinished` activation event) and immediately begins monitoring your workspace.
+
+### Network Requirements
+
+The extension requires HTTPS access to the Convex backend. Ensure your firewall or network doesn't block:
+
+- HTTPS traffic (port 443)
+- The specific Convex domain configured in your settings
+
+### Resource Usage
+
+The extension is designed to be lightweight:
+
+- Events are buffered in memory before sending
+- Network requests are batched to reduce overhead
+- Only text changes trigger event logging (not cursor movement or selection)
+
+### Deactivation
+
+When VS Code closes, the extension's `deactivate()` function flushes any remaining events in the buffer to ensure no data is lost.

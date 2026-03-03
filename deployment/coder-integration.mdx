@@ -1,0 +1,376 @@
+---
+title: Coder integration
+description: Configure Coder for student workspace provisioning in Leopard
+---
+
+Leopard integrates with [Coder](https://coder.com) to provide on-demand cloud IDE workspaces for students. This enables controlled coding environments for assignments with full event tracking.
+
+## What is Coder?
+
+Coder is an open-source platform for provisioning cloud development environments. It provides:
+
+- **Infrastructure as Code** - Define workspaces with Terraform templates
+- **Kubernetes support** - Run workspaces on Kubernetes clusters
+- **VS Code in the browser** - Full IDE experience without local setup
+- **Resource quotas** - Control CPU, memory, and storage per workspace
+
+## Architecture
+
+When a student works on an assignment in Leopard:
+
+<Steps>
+  <Step title="Student launches assignment">
+    Student clicks **Launch Workspace** on an assignment card in the web dashboard.
+  </Step>
+  
+  <Step title="Leopard provisions workspace">
+    The Next.js backend:
+    1. Calls Coder API to create/start a workspace for the student
+    2. Creates a Coder user account if needed
+    3. Links the Coder workspace to Leopard's workspace record
+    4. Returns workspace URL to the student
+  </Step>
+  
+  <Step title="Student codes in Coder workspace">
+    Student is redirected to the Coder workspace (VS Code in browser).
+    The Leopard VSCode extension is pre-installed and tracks events.
+  </Step>
+  
+  <Step title="Events sent to Convex">
+    The VSCode extension captures coding events and sends them to the Convex backend for storage and analysis.
+  </Step>
+</Steps>
+
+## Prerequisites
+
+<Note>
+  You need a running Coder deployment. See [Coder installation docs](https://coder.com/docs/installation) for setup instructions.
+</Note>
+
+Required:
+- Coder v2.28.0 or later
+- Kubernetes cluster (or Docker for local testing)
+- Admin access to Coder dashboard
+
+## Coder SDK
+
+Leopard includes a generated TypeScript SDK for the Coder API in `packages/coder-sdk/`.
+
+### SDK structure
+
+```text
+packages/coder-sdk/
+├── src/
+│   ├── client.gen.ts        # Auto-generated API client
+│   ├── types.gen.ts         # TypeScript types for Coder API
+│   ├── sdk.gen.ts           # SDK methods
+│   └── index.ts             # Main export
+├── v2.28.0-swagger.json     # OpenAPI spec for Coder v2.28.0
+└── openapi-ts.config.ts     # Code generation config
+```
+
+### Regenerating the SDK
+
+If you upgrade Coder or need to regenerate the SDK:
+
+<Steps>
+  <Step title="Download new OpenAPI spec">
+    Get the Swagger JSON from your Coder instance:
+    ```bash
+    curl https://coder.yourdomain.com/api/v2/swagger.json > packages/coder-sdk/v2.28.0-swagger.json
+    ```
+  </Step>
+  
+  <Step title="Generate TypeScript client">
+    Run the code generator:
+    ```bash
+    pnpm --filter @package/coder-sdk generate
+    ```
+    
+    This uses `@hey-api/openapi-ts` to generate:
+    - Type definitions from the OpenAPI schema
+    - API client methods
+    - Request/response validators
+  </Step>
+</Steps>
+
+## Environment configuration
+
+Set the Coder URL in your `.env` file:
+
+```bash .env
+CODER_URL="https://coder.yourdomain.com/"
+```
+
+This is used by:
+- The Convex backend to provision workspaces
+- The Next.js app to generate workspace URLs
+
+<Info>
+  The `CODER_URL` is not a secret and is set directly in `.env.example`. It's the public URL of your Coder deployment.
+</Info>
+
+## Workspace templates
+
+Leopard includes Coder workspace templates in `infra/coder-templates/`:
+
+```text
+infra/coder-templates/
+├── kubernetes/              # Standard Kubernetes workspace
+│   └── main.tf
+└── kubernetes-ephemeral/    # Ephemeral workspace (auto-deleted)
+    └── main.tf
+```
+
+### Kubernetes template
+
+The standard template provisions a workspace with:
+- Ubuntu-based container
+- Code-server (VS Code in browser)
+- Pre-installed Leopard VSCode extension
+- Persistent storage for student files
+
+### Ephemeral template
+
+For timed assignments or exams:
+- Workspace auto-deletes after a timeout
+- No persistent storage
+- Useful for preventing late work
+
+## Deploying templates to Coder
+
+<Steps>
+  <Step title="Install Coder CLI">
+    Download the Coder CLI:
+    ```bash
+    curl -L https://coder.com/install.sh | sh
+    ```
+  </Step>
+  
+  <Step title="Login to Coder">
+    Authenticate with your Coder instance:
+    ```bash
+    coder login https://coder.yourdomain.com
+    ```
+  </Step>
+  
+  <Step title="Create template">
+    Push the Kubernetes template:
+    ```bash
+    cd infra/coder-templates/kubernetes
+    coder templates create leopard-workspace
+    ```
+    
+    This creates a new template named `leopard-workspace` in your Coder deployment.
+  </Step>
+  
+  <Step title="Update template (for changes)">
+    After modifying the template:
+    ```bash
+    coder templates push leopard-workspace
+    ```
+  </Step>
+</Steps>
+
+## Workspace provisioning API
+
+Leopard's Convex backend handles workspace provisioning through the `api.coder` module.
+
+### Creating a workspace
+
+Example from `convex/api/coder.ts`:
+
+```typescript
+import { CoderClient } from '@package/coder-sdk';
+
+const client = new CoderClient({
+  baseURL: process.env.CODER_URL,
+  headers: {
+    'Coder-Session-Token': sessionToken,
+  },
+});
+
+// Create user in Coder
+const user = await client.users.createUser({
+  username: studentEmail,
+  email: studentEmail,
+});
+
+// Create workspace from template
+const workspace = await client.workspaces.createWorkspace({
+  template_id: 'leopard-workspace',
+  user_id: user.id,
+  name: `assignment-${assignmentId}`,
+});
+
+// Store workspace reference in Convex
+await ctx.db.insert('workspaces', {
+  coderWorkspaceId: workspace.id,
+  userId: studentId,
+  isActive: true,
+});
+```
+
+### Starting a workspace
+
+Workspaces can be stopped to save resources and started when needed:
+
+```typescript
+const build = await client.workspaces.startWorkspace({
+  workspace_id: workspaceId,
+});
+
+// Wait for workspace to be running
+await client.workspaces.waitForBuild(build.id);
+```
+
+### Getting workspace URL
+
+Generate the browser URL for a workspace:
+
+```typescript
+const workspaceUrl = `${process.env.CODER_URL}/workspaces/${workspace.id}`;
+```
+
+Students are redirected to this URL to access their coding environment.
+
+## VSCode extension in Coder
+
+The Leopard VSCode extension must be installed in Coder workspaces to enable event tracking.
+
+### Template installation
+
+Modify the Terraform template to pre-install the extension:
+
+```hcl main.tf
+resource "coder_agent" "main" {
+  # ... other config
+  
+  startup_script = <<-EOT
+    #!/bin/bash
+    
+    # Install Leopard extension
+    code-server --install-extension /path/to/leopard-extension.vsix
+    
+    # Configure extension
+    mkdir -p ~/.local/share/code-server/User
+    cat > ~/.local/share/code-server/User/settings.json <<EOF
+    {
+      "leopard.convexUrl": "${var.convex_url}"
+    }
+    EOF
+  EOT
+}
+```
+
+### Manual installation
+
+Students can also install manually:
+
+1. Download the `.vsix` extension file
+2. In Coder workspace: **Extensions** → **Install from VSIX**
+3. Select the downloaded file
+
+See: [Extension installation](/extension/installation)
+
+## Resource quotas
+
+Control resource usage per workspace in the Terraform template:
+
+```hcl main.tf
+resource "kubernetes_pod" "workspace" {
+  # ...
+  
+  spec {
+    container {
+      # ...
+      resources {
+        requests = {
+          cpu    = "500m"
+          memory = "1Gi"
+        }
+        limits = {
+          cpu    = "2000m"
+          memory = "4Gi"
+        }
+      }
+    }
+  }
+}
+```
+
+This prevents resource exhaustion and ensures fair usage across students.
+
+## Assignment-specific workspaces
+
+You can create different workspace configurations per assignment using the `workspaceConfig` field:
+
+```typescript convex/web/assignment.ts
+await ctx.db.insert('assignments', {
+  // ... other fields
+  workspaceConfig: {
+    templateId: 'leopard-workspace',
+    parameters: {
+      cpu_limit: '1000m',
+      memory_limit: '2Gi',
+      disk_size: '10Gi',
+    },
+  },
+});
+```
+
+The workspace provisioning code reads this configuration and applies it when creating the workspace.
+
+## Monitoring workspaces
+
+Track workspace status in the Leopard dashboard:
+
+```typescript
+// Get active workspaces for a student
+const activeWorkspaces = await ctx.db
+  .query('workspaces')
+  .withIndex('userId_isActive', (q) => 
+    q.eq('userId', studentId).eq('isActive', true)
+  )
+  .collect();
+```
+
+Teachers can see:
+- Which students have active workspaces
+- Workspace resource usage (via Coder API)
+- When workspaces were last accessed
+
+## Troubleshooting
+
+### Workspace creation fails
+
+1. Check that `CODER_URL` is correct and accessible
+2. Verify Coder templates are deployed
+3. Ensure Kubernetes cluster has available resources
+4. Check Coder logs: `coder logs`
+
+### Extension not installed in workspace
+
+1. Verify the startup script in the Terraform template
+2. Check workspace build logs in Coder dashboard
+3. Manually install the extension to test
+
+### Events not being tracked
+
+1. Verify extension is installed and enabled
+2. Check extension configuration (`leopard.convexUrl`)
+3. View extension output channel for errors
+4. Ensure workspace has network access to Convex
+
+See: [Workspace tracking](/students/workspace-tracking)
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Extension installation" icon="puzzle-piece" href="/extension/installation">
+    Package and deploy the VSCode extension
+  </Card>
+  <Card title="Creating assignments" icon="file-lines" href="/teachers/creating-assignments">
+    Set up assignments with workspace configurations
+  </Card>
+</CardGroup>

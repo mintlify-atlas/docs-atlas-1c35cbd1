@@ -1,0 +1,359 @@
+---
+title: Create & Manage Assignments
+description: Create, update, and delete assignments
+---
+
+## Create Assignment
+
+Create a new assignment in a classroom. Only instructors can create assignments.
+
+<CodeGroup>
+```typescript Mutation
+import { api } from "./_generated/api";
+import { useMutation } from "convex/react";
+
+const createAssignment = useMutation(api.web.teacherAssignments.createAssignment);
+const assignmentId = await createAssignment({
+  classroomId: "classroom_123",
+  name: "Binary Search Trees",
+  dueDate: Date.now() + 7 * 24 * 60 * 60 * 1000, // 1 week from now
+  releaseDate: Date.now(),
+  description: "Implement a BST with insert, delete, and search operations",
+  workspaceConfig: {
+    template: "python-basic",
+    starterFiles: ["bst.py", "test_bst.py"]
+  }
+});
+```
+
+```typescript Response
+"assignment_abc123def456" // The new assignment ID
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/teacherAssignments.ts:88
+export const createAssignment = mutation({
+  args: {
+    classroomId: v.id("classrooms"),
+    name: v.string(),
+    dueDate: v.number(),
+    releaseDate: v.number(),
+    description: v.optional(v.string()),
+    workspaceConfig: v.optional(v.record(v.string(), v.any())),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+    const classroom = await requireInstructorAccess(ctx, args.classroomId, user._id);
+
+    const assignmentId = await ctx.db.insert("assignments", {
+      classroomId: args.classroomId,
+      name: args.name,
+      dueDate: args.dueDate,
+      releaseDate: args.releaseDate,
+      description: args.description,
+      workspaceConfig: args.workspaceConfig,
+    });
+
+    await ctx.db.patch(classroom._id, {
+      assignments: [...classroom.assignments, assignmentId],
+    });
+
+    return assignmentId;
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="classroomId" type="Id<'classrooms'>" required>
+  The classroom to create the assignment in
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  The name of the assignment
+</ParamField>
+
+<ParamField path="dueDate" type="number" required>
+  Unix timestamp (milliseconds) when the assignment is due
+</ParamField>
+
+<ParamField path="releaseDate" type="number" required>
+  Unix timestamp (milliseconds) when the assignment becomes available to students
+</ParamField>
+
+<ParamField path="description" type="string" optional>
+  Markdown-formatted description of the assignment requirements and objectives
+</ParamField>
+
+<ParamField path="workspaceConfig" type="Record<string, any>" optional>
+  Configuration object for the coding workspace environment
+  
+  Example:
+  ```json
+  {
+    "template": "python-basic",
+    "starterFiles": ["main.py", "test_main.py"],
+    "dependencies": ["numpy", "pytest"],
+    "timeoutMinutes": 60
+  }
+  ```
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be an instructor (owner or assistant) for the classroom, or an admin
+</ParamField>
+
+### Return Type
+
+<ResponseField name="assignmentId" type="Id<'assignments'>">
+  The ID of the newly created assignment
+</ResponseField>
+
+### Errors
+
+<ResponseField name="Classroom not found" type="error">
+  The specified classroom ID does not exist
+</ResponseField>
+
+<ResponseField name="Not authorized for this classroom" type="error">
+  User is not an instructor for the classroom
+</ResponseField>
+
+---
+
+## Update Assignment
+
+Update an existing assignment's properties.
+
+<CodeGroup>
+```typescript Mutation
+import { api } from "./_generated/api";
+import { useMutation } from "convex/react";
+
+const updateAssignment = useMutation(api.web.teacherAssignments.updateAssignment);
+await updateAssignment({
+  assignmentId: "assignment_123",
+  name: "Advanced Binary Search Trees",
+  dueDate: Date.now() + 14 * 24 * 60 * 60 * 1000, // Extend by a week
+});
+```
+
+```typescript Response
+"assignment_123" // Returns the assignment ID
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/teacherAssignments.ts:118
+export const updateAssignment = mutation({
+  args: {
+    assignmentId: v.id("assignments"),
+    name: v.optional(v.string()),
+    dueDate: v.optional(v.number()),
+    releaseDate: v.optional(v.number()),
+    description: v.optional(v.string()),
+    workspaceConfig: v.optional(v.record(v.string(), v.any())),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+    const { assignment, classroom } = await getClassroomForAssignment(ctx, args.assignmentId);
+
+    await requireInstructorAccess(ctx, classroom._id, user._id);
+
+    const patch: {
+      name?: string;
+      dueDate?: number;
+      releaseDate?: number;
+      description?: string;
+      workspaceConfig?: Record<string, unknown>;
+    } = {};
+
+    if (args.name !== undefined) patch.name = args.name;
+    const newReleaseDate = args.releaseDate ?? assignment.releaseDate;
+    const newDueDate = args.dueDate ?? assignment.dueDate;
+
+    if (newDueDate <= newReleaseDate) {
+      throw new Error("Due date must be after release date");
+    }
+
+    if (args.dueDate !== undefined) patch.dueDate = args.dueDate;
+    if (args.releaseDate !== undefined) patch.releaseDate = args.releaseDate;
+
+    if (args.description !== undefined) patch.description = args.description;
+    if (args.workspaceConfig !== undefined) patch.workspaceConfig = args.workspaceConfig;
+
+    if (Object.keys(patch).length === 0) {
+      return assignment._id;
+    }
+
+    await ctx.db.patch(assignment._id, patch);
+    return assignment._id;
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="assignmentId" type="Id<'assignments'>" required>
+  The ID of the assignment to update
+</ParamField>
+
+<ParamField path="name" type="string" optional>
+  New name for the assignment
+</ParamField>
+
+<ParamField path="dueDate" type="number" optional>
+  New due date timestamp
+</ParamField>
+
+<ParamField path="releaseDate" type="number" optional>
+  New release date timestamp
+</ParamField>
+
+<ParamField path="description" type="string" optional>
+  New description
+</ParamField>
+
+<ParamField path="workspaceConfig" type="Record<string, any>" optional>
+  New workspace configuration
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be an instructor for the classroom or an admin
+</ParamField>
+
+### Validation
+
+<Warning>
+  The due date must always be after the release date. The mutation validates this constraint using both existing and new values.
+</Warning>
+
+### Return Type
+
+<ResponseField name="assignmentId" type="Id<'assignments'>">
+  The ID of the updated assignment
+</ResponseField>
+
+### Errors
+
+<ResponseField name="Assignment not found" type="error">
+  The specified assignment ID does not exist
+</ResponseField>
+
+<ResponseField name="Due date must be after release date" type="error">
+  Date validation failed
+</ResponseField>
+
+<ResponseField name="Not authorized for this classroom" type="error">
+  User is not an instructor for the classroom
+</ResponseField>
+
+---
+
+## Delete Assignment
+
+Permanently delete an assignment and all associated submissions.
+
+<Warning>
+  This operation is irreversible and will delete:
+  - The assignment
+  - All student submissions
+  - All flags on those submissions
+</Warning>
+
+<CodeGroup>
+```typescript Mutation
+import { api } from "./_generated/api";
+import { useMutation } from "convex/react";
+
+const deleteAssignment = useMutation(api.web.teacherAssignments.deleteAssignment);
+await deleteAssignment({
+  assignmentId: "assignment_123"
+});
+```
+
+```typescript Response
+"assignment_123" // Returns the deleted assignment ID
+```
+</CodeGroup>
+
+### Function Signature
+
+```typescript web/teacherAssignments.ts:164
+export const deleteAssignment = mutation({
+  args: {
+    assignmentId: v.id("assignments"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+    const { assignment, classroom } = await getClassroomForAssignment(ctx, args.assignmentId);
+
+    await requireInstructorAccess(ctx, classroom._id, user._id);
+
+    const submissions = await ctx.db
+      .query("submissions")
+      .withIndex("assignmentId_studentId", (q) => q.eq("assignmentId", assignment._id))
+      .collect();
+
+    for (const submission of submissions) {
+      for (const flagId of submission.flags) {
+        const flag = await ctx.db.get(flagId);
+        if (flag) {
+          await ctx.db.delete(flag._id);
+        }
+      }
+      await ctx.db.delete(submission._id);
+    }
+
+    await ctx.db.patch(classroom._id, {
+      assignments: classroom.assignments.filter((id) => id !== assignment._id),
+    });
+
+    await ctx.db.delete(assignment._id);
+    return assignment._id;
+  },
+});
+```
+
+### Parameters
+
+<ParamField path="assignmentId" type="Id<'assignments'>" required>
+  The ID of the assignment to delete
+</ParamField>
+
+### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be an instructor for the classroom or an admin
+</ParamField>
+
+### Cascade Deletion
+
+The following data is automatically deleted:
+
+1. **Submissions** - All student submissions for the assignment
+2. **Flags** - All academic integrity flags on those submissions
+3. **Classroom reference** - The assignment is removed from the classroom's assignments array
+
+### Return Type
+
+<ResponseField name="assignmentId" type="Id<'assignments'>">
+  The ID of the deleted assignment
+</ResponseField>
+
+### Errors
+
+<ResponseField name="Assignment not found" type="error">
+  The specified assignment ID does not exist
+</ResponseField>
+
+<ResponseField name="Not authorized for this classroom" type="error">
+  User is not an instructor for the classroom
+</ResponseField>

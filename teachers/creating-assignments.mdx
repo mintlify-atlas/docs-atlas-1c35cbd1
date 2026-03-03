@@ -1,0 +1,368 @@
+---
+title: Creating Assignments
+description: Learn how to create and configure assignments for your students
+---
+
+Assignments are the core of Leopard's academic integrity system. Each assignment provides students with a workspace environment and tracks their activity for integrity monitoring.
+
+## Assignment Structure
+
+Every assignment has the following fields:
+
+```typescript
+// From: packages/backend/convex/schema.ts:5-12
+assignments: {
+  classroomId: Id<"classrooms">,
+  description?: string,
+  dueDate: number,                              // Unix timestamp
+  name: string,
+  releaseDate: number,                          // Unix timestamp
+  workspaceConfig?: Record<string, any>         // Coder workspace settings
+}
+```
+
+## Creating an Assignment
+
+Follow these steps to create a new assignment:
+
+<Steps>
+  <Step title="Navigate to Assignment Creation">
+    From your classroom detail page, click "New Assignment" or navigate to:
+    ```
+    /teacher/classroom/{classroomId}/assignment/new
+    ```
+  </Step>
+  
+  <Step title="Fill in Assignment Details">
+    Provide the required information:
+    
+    <CodeGroup>
+    ```typescript API Call
+    // From: packages/backend/convex/web/teacherAssignments.ts:88-116
+    const assignmentId = await createAssignment({
+      classroomId: "classroom_id",
+      name: "Week 3 - Sorting Algorithms",
+      description: "Implement quicksort and mergesort algorithms",
+      releaseDate: 1709251200000,      // March 1, 2024
+      dueDate: 1709596800000,          // March 5, 2024
+      workspaceConfig: {
+        template: "python-workspace",
+        resources: { cpu: 2, memory: 4 }
+      }
+    });
+    ```
+    
+    ```tsx UI Form
+    // From: apps/nextjs/src/app/teacher/classroom/[id]/assignment/new/page.tsx:68-74
+    const assignmentId = await createAssignment({
+      classroomId,
+      name: name.trim(),
+      description: description.trim() || undefined,
+      releaseDate: parsedReleaseDate,
+      dueDate: parsedDueDate,
+    });
+    ```
+    </CodeGroup>
+  </Step>
+  
+  <Step title="Assignment Created">
+    The assignment is added to your classroom's assignment list:
+    
+    ```typescript
+    // From: packages/backend/convex/web/teacherAssignments.ts:101-112
+    const assignmentId = await ctx.db.insert("assignments", {
+      classroomId: args.classroomId,
+      name: args.name,
+      dueDate: args.dueDate,
+      releaseDate: args.releaseDate,
+      description: args.description,
+      workspaceConfig: args.workspaceConfig,
+    });
+    
+    await ctx.db.patch(classroom._id, {
+      assignments: [...classroom.assignments, assignmentId],
+    });
+    ```
+  </Step>
+</Steps>
+
+## Assignment Fields Explained
+
+### Name
+
+A clear, descriptive title for the assignment:
+
+```tsx
+// From: apps/nextjs/src/app/teacher/classroom/[id]/assignment/new/page.tsx:108-116
+<Label htmlFor="assignment-name">Name</Label>
+<Input
+  id="assignment-name"
+  required
+  value={name}
+  onChange={(event) => setName(event.target.value)}
+  placeholder="Week 3 - Sorting Algorithms"
+/>
+```
+
+### Description
+
+Optional rich text content describing the assignment objectives and requirements:
+
+```tsx
+// From: apps/nextjs/src/app/teacher/classroom/[id]/assignment/new/page.tsx:119-126
+<Label htmlFor="assignment-description">Description</Label>
+<Editor
+  content={description}
+  onChange={setDescription}
+  placeholder="Describe the assignment objectives and requirements..."
+/>
+```
+
+<Note>
+  The description field supports Markdown formatting for rich content like code blocks, lists, and links.
+</Note>
+
+### Release Date
+
+The timestamp when the assignment becomes visible to students:
+
+```tsx
+// From: apps/nextjs/src/app/teacher/classroom/[id]/assignment/new/page.tsx:128-137
+<Label htmlFor="release-date">Release Date</Label>
+<Input
+  id="release-date"
+  type="datetime-local"
+  required
+  value={releaseDate}
+  onChange={(event) => setReleaseDate(event.target.value)}
+/>
+```
+
+```typescript
+// Validation
+if (parsedDueDate <= parsedReleaseDate) {
+  throw new Error("Due date must be after release date");
+}
+```
+
+### Due Date
+
+The deadline for student submissions:
+
+```tsx
+// From: apps/nextjs/src/app/teacher/classroom/[id]/assignment/new/page.tsx:139-147
+<Label htmlFor="due-date">Due Date</Label>
+<Input
+  id="due-date"
+  type="datetime-local"
+  required
+  value={dueDate}
+  onChange={(event) => setDueDate(event.target.value)}
+/>
+```
+
+<Warning>
+  Due dates must be after release dates. The system validates this constraint on both client and server.
+</Warning>
+
+### Workspace Configuration
+
+The `workspaceConfig` field controls the Coder workspace environment for students:
+
+```typescript
+// From: packages/backend/convex/schema.ts:11
+workspaceConfig?: Record<string, any>
+
+// Example configurations:
+{
+  template: "python-workspace",
+  resources: {
+    cpu: 2,
+    memory: 4,
+    storage: 10
+  },
+  timeout: 3600000,        // 1 hour in milliseconds
+  extensions: [
+    "ms-python.python",
+    "ms-toolsai.jupyter"
+  ]
+}
+```
+
+## Workspace Launch Process
+
+When a student launches an assignment workspace, Leopard:
+
+<Steps>
+  <Step title="Create or Fetch User in Coder">
+    ```typescript
+    // From: packages/backend/convex/web/assignment.ts:176-219
+    const coderUserId = user._id.toString();
+    let userInCoder = await getUserByName({
+      client: coderClient,
+      path: { user: coderUserId }
+    });
+    
+    if (!userInCoder) {
+      // Create new user in Coder
+      await createNewUser({
+        client: coderClient,
+        body: {
+          username: coderUserId,
+          email: `${sanitizedEmail}-${coderUserId}@internal.leopard.com`,
+          organization_ids: [organizationId],
+          login_type: "none",
+          user_status: "active"
+        }
+      });
+    }
+    ```
+  </Step>
+  
+  <Step title="Create or Fetch Workspace">
+    ```typescript
+    // From: packages/backend/convex/web/assignment.ts:249-278
+    let workspaceMetadata = await getWorkspaceMetadataByUserAndWorkspaceName({
+      client: coderClient,
+      path: {
+        user: coderUserId,
+        workspacename: assignmentId.toString()
+      }
+    });
+    
+    if (workspaceMetadata.error) {
+      await createUserWorkspace({
+        client: coderClient,
+        body: {
+          name: assignmentId.toString(),
+          template_id: templateId,
+          ttl_ms: 3600000
+        },
+        path: { user: coderUserId }
+      });
+    }
+    ```
+  </Step>
+  
+  <Step title="Start Workspace if Stopped">
+    ```typescript
+    // From: packages/backend/convex/web/assignment.ts:284-306
+    const workspaceStatus = workspaceMetadata.data.latest_build?.status;
+    
+    if (workspaceStatus === "stopped" || 
+        workspaceStatus === "failed" || 
+        workspaceStatus === "pending") {
+      await createWorkspaceBuild({
+        client: coderClient,
+        path: { workspace: targetWorkspaceId },
+        body: { transition: "start" }
+      });
+    }
+    ```
+  </Step>
+  
+  <Step title="Return Workspace URL">
+    ```typescript
+    // From: packages/backend/convex/web/assignment.ts:366-371
+    const workspaceUrl = 
+      `https://${coderHost}/@${coderUserId}/${workspaceMetadata.data.name}.main/apps/code-server`;
+    
+    return { 
+      workspaceUrl, 
+      coderUserSessionKey: sessionKey 
+    };
+    ```
+  </Step>
+</Steps>
+
+## Updating Assignments
+
+Modify assignment details after creation:
+
+```typescript
+// From: packages/backend/convex/web/teacherAssignments.ts:118-162
+await updateAssignment({
+  assignmentId: "assignment_id",
+  name: "Updated Assignment Name",
+  description: "New description",
+  releaseDate: 1709337600000,
+  dueDate: 1709683200000,
+  workspaceConfig: {
+    template: "updated-template"
+  }
+});
+
+// All fields are optional
+// Only provided fields will be updated
+// Due date validation still applies
+```
+
+## Deleting Assignments
+
+Deleting an assignment cascades to all related data:
+
+```typescript
+// From: packages/backend/convex/web/teacherAssignments.ts:164-195
+await deleteAssignment({
+  assignmentId: "assignment_id"
+});
+
+// Automatically deletes:
+// 1. All submissions for the assignment
+// 2. All flags on those submissions
+// 3. Removes assignment from classroom.assignments array
+// 4. The assignment document itself
+```
+
+<Warning>
+  Deleting an assignment is permanent and removes all student submissions and grades. This action cannot be undone.
+</Warning>
+
+## Assignment UI Example
+
+```tsx
+// From: apps/nextjs/src/app/teacher/classroom/[id]/assignment/new/page.tsx:89-162
+function NewAssignmentForm({ classroomId }: { classroomId: Id<"classrooms"> }) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [releaseDate, setReleaseDate] = useState(formatDateForInput(Date.now()));
+  const [dueDate, setDueDate] = useState(
+    formatDateForInput(Date.now() + 24 * 60 * 60 * 1000)
+  );
+  
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    
+    const parsedReleaseDate = Date.parse(releaseDate);
+    const parsedDueDate = Date.parse(dueDate);
+    
+    if (parsedDueDate <= parsedReleaseDate) {
+      throw new Error("Due date must be after release date");
+    }
+    
+    const assignmentId = await createAssignment({
+      classroomId,
+      name: name.trim(),
+      description: description.trim() || undefined,
+      releaseDate: parsedReleaseDate,
+      dueDate: parsedDueDate,
+    });
+    
+    router.push(`/teacher/classroom/${classroomId}/assignment/${assignmentId}`);
+  };
+  
+  return (
+    <form onSubmit={handleSubmit}>
+      {/* Form fields */}
+    </form>
+  );
+}
+```
+
+## Best Practices
+
+1. **Clear Naming**: Use descriptive names that include the week/topic
+2. **Detailed Descriptions**: Provide comprehensive instructions in Markdown
+3. **Appropriate Timing**: Give students enough time between release and due dates
+4. **Workspace Config**: Test workspace templates before assigning to students
+5. **Regular Updates**: Keep assignment details current as the course progresses

@@ -1,0 +1,198 @@
+---
+title: Deployment overview
+description: Learn how to deploy Leopard to production
+---
+
+Leopard is a distributed system with multiple components that work together to provide academic integrity verification through IDE event tracking.
+
+## Architecture
+
+Leopard consists of three main components:
+
+<CardGroup cols={3}>
+  <Card title="VSCode Extension" icon="code" href="/extension/installation">
+    Tracks student coding activity and sends events to the backend
+  </Card>
+  <Card title="Convex Backend" icon="database" href="/deployment/convex-backend">
+    Serverless backend handling data storage and business logic
+  </Card>
+  <Card title="Next.js Web App" icon="globe" href="/deployment/nextjs-deployment">
+    Teacher and student dashboards for managing classrooms and assignments
+  </Card>
+</CardGroup>
+
+## Technology stack
+
+### Core technologies
+
+- **[Convex](https://convex.dev)** - Serverless backend with real-time database
+- **[Next.js 16](https://nextjs.org)** - React framework for the web application
+- **[Better Auth](https://www.better-auth.com)** - Authentication and user management
+- **[Coder](https://coder.com)** - Cloud IDE workspaces for students
+- **TypeScript** - Type-safe development across all packages
+- **pnpm** - Fast, efficient package manager
+- **Turborepo** - Monorepo build system
+
+### Frontend stack
+
+- **React 19** - Latest React features
+- **Tailwind CSS v4** - Utility-first CSS framework
+- **shadcn/ui** - Component library
+- **Tiptap** - Rich text editor for assignments
+
+## Prerequisites
+
+Before deploying Leopard, ensure you have:
+
+<Steps>
+  <Step title="Node.js and pnpm">
+    - Node.js version `^22.21.0` (specified in `package.json#engines`)
+    - pnpm version `^10.19.0`
+    
+    Check your versions:
+    ```bash
+    node --version
+    pnpm --version
+    ```
+  </Step>
+  
+  <Step title="Convex account">
+    Sign up for a free account at [convex.dev](https://convex.dev)
+  </Step>
+  
+  <Step title="Vercel account (optional)">
+    Recommended for deploying the Next.js app: [vercel.com](https://vercel.com)
+  </Step>
+  
+  <Step title="Coder instance">
+    A running Coder deployment for student workspace provisioning
+    
+    See the Coder integration guide: [Coder integration](/deployment/coder-integration)
+  </Step>
+</Steps>
+
+## Deployment flow
+
+The recommended deployment flow is:
+
+<Steps>
+  <Step title="Configure environment variables">
+    Copy `.env.example` to `.env` and fill in all required values
+    
+    See: [Environment variables](/deployment/environment-variables)
+  </Step>
+  
+  <Step title="Deploy Convex backend">
+    Deploy your Convex functions and schema
+    
+    See: [Convex backend](/deployment/convex-backend)
+  </Step>
+  
+  <Step title="Generate Better Auth schema">
+    Run the Better Auth CLI to generate authentication tables
+    
+    ```bash
+    pnpm --filter @package/auth generate
+    ```
+  </Step>
+  
+  <Step title="Deploy Next.js app">
+    Deploy the web application to Vercel or your hosting provider
+    
+    See: [Next.js deployment](/deployment/nextjs-deployment)
+  </Step>
+  
+  <Step title="Package VSCode extension">
+    Build and distribute the VSCode extension to students
+    
+    ```bash
+    cd apps/vscode-extension
+    pnpm build
+    ```
+  </Step>
+</Steps>
+
+## Monorepo structure
+
+Leopard uses a Turborepo monorepo structure:
+
+```text
+.
+├── apps/
+│   ├── nextjs/              # Web application
+│   └── vscode-extension/    # VSCode extension
+├── packages/
+│   ├── backend/             # Convex backend functions
+│   ├── coder-sdk/          # Coder API client
+│   ├── validators/         # Shared validation schemas
+│   └── ui/                 # Shared UI components
+├── tooling/
+│   ├── eslint/             # ESLint configuration
+│   ├── prettier/           # Prettier configuration
+│   ├── tailwind/           # Tailwind configuration
+│   └── typescript/         # TypeScript configuration
+└── infra/
+    ├── coder-templates/    # Coder workspace templates
+    ├── k8s/               # Kubernetes manifests
+    └── main.tf            # Terraform configuration
+```
+
+<Note>
+  The monorepo uses workspace protocols (`workspace:*`) to link packages together. This ensures type safety and enables parallel builds with Turbo.
+</Note>
+
+## Development vs production
+
+### Development
+
+For local development:
+
+```bash
+# Install dependencies
+pnpm install
+
+# Start development servers
+pnpm dev
+```
+
+This runs:
+- Convex dev mode (with live function updates)
+- Next.js dev server (with hot reload)
+- VSCode extension debugger
+
+### Production
+
+For production deployments:
+
+- Convex functions are deployed to Convex's cloud infrastructure
+- Next.js app is deployed to Vercel (or another Node.js host)
+- VSCode extension is packaged as a `.vsix` file and distributed
+- Environment variables are configured in each platform's dashboard
+
+## Security considerations
+
+<Warning>
+  Never commit secrets to version control. The `.env` file is gitignored for this reason.
+</Warning>
+
+- Use strong secrets for `BETTER_AUTH_SECRET` (generate with `openssl rand -base64 32`)
+- Configure OAuth providers (Discord, etc.) with proper redirect URLs
+- Set `SITE_URL` to your production domain
+- Use environment variables for all API keys and database URLs
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Environment variables" icon="gear" href="/deployment/environment-variables">
+    Configure all required environment variables
+  </Card>
+  <Card title="Database setup" icon="database" href="/deployment/database-setup">
+    Set up the Convex schema and Better Auth tables
+  </Card>
+  <Card title="Convex backend" icon="server" href="/deployment/convex-backend">
+    Deploy your Convex functions
+  </Card>
+  <Card title="Next.js deployment" icon="rocket" href="/deployment/nextjs-deployment">
+    Deploy the web application
+  </Card>
+</CardGroup>

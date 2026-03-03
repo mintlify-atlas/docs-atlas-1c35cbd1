@@ -1,0 +1,251 @@
+---
+title: Environment variables
+description: Configure environment variables for Leopard deployment
+---
+
+Leopard requires several environment variables to be configured for both development and production environments.
+
+## Configuration file
+
+All environment variables are defined in the `.env` file at the root of the monorepo. Copy the example file to get started:
+
+```bash
+cp .env.example .env
+```
+
+<Warning>
+  The `.env` file is gitignored and should never be committed to version control. Keep your secrets secure.
+</Warning>
+
+## Required variables
+
+### Database
+
+<ParamField path="POSTGRES_URL" type="string" required>
+  Connection string for the Supabase PostgreSQL database.
+  
+  Format:
+  ```
+  postgres://postgres.[USERNAME]:[PASSWORD]@aws-0-eu-central-1.pooler.supabase.com:6543/postgres?workaround=supabase-pooler.vercel
+  ```
+  
+  <Note>
+    While Convex is the primary database, Supabase is used for certain features. You may be able to remove this dependency if not using those features.
+  </Note>
+</ParamField>
+
+### Better Auth
+
+<ParamField path="BETTER_AUTH_SECRET" type="string" required>
+  Secret key for signing and encrypting authentication tokens.
+  
+  Generate a secure secret:
+  ```bash
+  openssl rand -base64 32
+  ```
+  
+  **Example:** `supersecret` (DO NOT use this in production!)
+  
+  <Warning>
+    Use a cryptographically secure random string in production. The example value is insecure.
+  </Warning>
+</ParamField>
+
+### Convex
+
+<ParamField path="CONVEX_DEPLOYMENT" type="string" required>
+  Your Convex deployment name (obtained from the Convex dashboard).
+  
+  **Example:** `dev:happy-animal-123` or `prod:clever-walrus-456`
+</ParamField>
+
+<ParamField path="NEXT_PUBLIC_CONVEX_URL" type="string" required>
+  Public URL for your Convex deployment.
+  
+  **Example:** `https://happy-animal-123.convex.cloud`
+  
+  <Info>
+    This is prefixed with `NEXT_PUBLIC_` because it's used in browser code. It will be embedded in the client bundle.
+  </Info>
+</ParamField>
+
+<ParamField path="NEXT_PUBLIC_CONVEX_SITE_URL" type="string" required>
+  Public URL for your Convex site (if using Convex hosting).
+  
+  **Example:** `https://happy-animal-123.convex.site`
+</ParamField>
+
+<ParamField path="SITE_URL" type="string" required>
+  The URL where your Next.js application is hosted.
+  
+  **Development:** `http://localhost:3000`
+  
+  **Production:** `https://yourdomain.com`
+</ParamField>
+
+### OAuth providers
+
+<ParamField path="AUTH_DISCORD_ID" type="string" optional>
+  Discord OAuth application client ID.
+  
+  Obtain from: [Discord Developer Portal](https://discord.com/developers/applications)
+</ParamField>
+
+<ParamField path="AUTH_DISCORD_SECRET" type="string" optional>
+  Discord OAuth application client secret.
+  
+  <Warning>
+    Keep this secret secure. Never expose it in client-side code or commit it to version control.
+  </Warning>
+</ParamField>
+
+### Coder integration
+
+<ParamField path="CODER_URL" type="string" required>
+  URL of your Coder deployment for student workspace provisioning.
+  
+  **Example:** `https://coder.nolapse.tech/`
+  
+  <Note>
+    This is set directly in `.env.example` because it's not a secret that needs to be hidden. Update this to your Coder instance URL.
+  </Note>
+</ParamField>
+
+## Environment-specific configuration
+
+### Development
+
+For local development, your `.env` should look like:
+
+```bash
+# Database (optional for local dev if not using certain features)
+POSTGRES_URL="postgres://..."
+
+# Better Auth
+BETTER_AUTH_SECRET="dev-secret-change-in-production"
+
+# Convex (from `npx convex dev`)
+CONVEX_DEPLOYMENT="dev:happy-animal-123"
+NEXT_PUBLIC_CONVEX_URL="https://happy-animal-123.convex.cloud"
+NEXT_PUBLIC_CONVEX_SITE_URL="https://happy-animal-123.convex.site"
+SITE_URL="http://localhost:3000"
+
+# OAuth (optional for testing)
+AUTH_DISCORD_ID="your-discord-client-id"
+AUTH_DISCORD_SECRET="your-discord-client-secret"
+
+# Coder
+CODER_URL="https://coder.nolapse.tech/"
+```
+
+### Production
+
+For production deployments:
+
+1. **Convex Dashboard**: Set environment variables in your Convex project settings
+2. **Vercel Dashboard**: Set environment variables in your Vercel project settings
+3. **Never use default/example values** - generate secure secrets
+
+<CodeGroup>
+```bash Vercel Environment Variables
+# Set in Vercel dashboard
+BETTER_AUTH_SECRET=<secure-random-string>
+NEXT_PUBLIC_CONVEX_URL=https://your-prod-deployment.convex.cloud
+NEXT_PUBLIC_CONVEX_SITE_URL=https://your-prod-deployment.convex.site
+SITE_URL=https://yourdomain.com
+AUTH_DISCORD_ID=your-production-discord-id
+AUTH_DISCORD_SECRET=your-production-discord-secret
+CODER_URL=https://coder.yourdomain.com/
+```
+
+```bash Convex Environment Variables
+# Set in Convex dashboard
+BETTER_AUTH_SECRET=<same-as-vercel>
+SITE_URL=https://yourdomain.com
+CODER_URL=https://coder.yourdomain.com/
+```
+</CodeGroup>
+
+## VSCode extension configuration
+
+The VSCode extension uses a different configuration mechanism. Students configure the Convex URL through VS Code settings:
+
+```json
+{
+  "leopard.convexUrl": "https://your-prod-deployment.convex.cloud"
+}
+```
+
+See: [Extension configuration](/extension/configuration)
+
+## Validation
+
+Leopard uses `@t3-oss/env-core` for environment variable validation. If required variables are missing, the application will fail to start with a helpful error message.
+
+The validation logic is defined in:
+- `packages/backend/convex/env.ts` - Backend environment validation
+- `apps/nextjs/src/env.ts` - Next.js environment validation (if present)
+
+## Security best practices
+
+<Steps>
+  <Step title="Generate secure secrets">
+    Use cryptographically secure random strings for all secrets:
+    ```bash
+    openssl rand -base64 32
+    ```
+  </Step>
+  
+  <Step title="Use different secrets per environment">
+    Development and production should have completely different secrets.
+  </Step>
+  
+  <Step title="Restrict access">
+    Only team members who need access to production should have the production `.env` file.
+  </Step>
+  
+  <Step title="Rotate secrets regularly">
+    Change secrets periodically, especially if a team member leaves.
+  </Step>
+  
+  <Step title="Use secret management tools">
+    For teams, consider using tools like 1Password, Doppler, or AWS Secrets Manager.
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Missing environment variables
+
+If you see an error about missing environment variables:
+
+1. Ensure your `.env` file exists in the root directory
+2. Check that all required variables are set
+3. Restart your development server after changing `.env`
+
+### OAuth redirect errors
+
+If OAuth authentication fails:
+
+1. Verify your `SITE_URL` matches your deployment URL
+2. Check that OAuth redirect URLs are configured correctly in the provider dashboard
+3. Ensure `AUTH_*_ID` and `AUTH_*_SECRET` are correct
+
+### Convex connection issues
+
+If the app can't connect to Convex:
+
+1. Verify `NEXT_PUBLIC_CONVEX_URL` is correct and publicly accessible
+2. Check that your Convex deployment is running (`npx convex dashboard`)
+3. Ensure environment variables are set in both local `.env` and Vercel dashboard
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Database setup" icon="database" href="/deployment/database-setup">
+    Configure the Convex schema and Better Auth tables
+  </Card>
+  <Card title="Convex backend" icon="server" href="/deployment/convex-backend">
+    Deploy your backend functions
+  </Card>
+</CardGroup>

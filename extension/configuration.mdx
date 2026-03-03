@@ -1,0 +1,110 @@
+---
+title: Configuration
+description: Configure the Leopard VSCode extension to connect to your institution's backend
+---
+
+The Leopard VSCode extension requires minimal configuration. The primary setting controls which backend server receives your coding activity data.
+
+## Settings
+
+### Convex URL
+
+The `leopard.convexUrl` setting specifies the Convex deployment URL where coding events are sent.
+
+**Setting**: `leopard.convexUrl`  
+**Type**: String  
+**Default**: `https://optimistic-kangaroo-331.convex.cloud`
+
+<CodeGroup>
+```json settings.json
+{
+  "leopard.convexUrl": "https://optimistic-kangaroo-331.convex.cloud"
+}
+```
+
+```json Custom Deployment
+{
+  "leopard.convexUrl": "https://your-institution.convex.cloud"
+}
+```
+</CodeGroup>
+
+## How to Configure
+
+There are two ways to configure the Leopard extension:
+
+### Via VS Code Settings UI
+
+<Steps>
+  <Step title="Open Settings">
+    - Press `Cmd+,` (macOS) or `Ctrl+,` (Windows/Linux)
+    - Or go to `File > Preferences > Settings` (Windows/Linux) or `Code > Settings > Settings` (macOS)
+  </Step>
+
+  <Step title="Search for Leopard">
+    In the search bar at the top, type "Leopard" to filter settings.
+  </Step>
+
+  <Step title="Update Convex URL">
+    You'll see the **Leopard: Convex URL** setting. Update it with the URL provided by your instructor or institution.
+  </Step>
+
+  <Step title="Verify Connection">
+    Open the Output panel (`View > Output`) and select **Leopard Event Logger** from the dropdown. You should see:
+
+    ```
+    [INIT] Convex URL: https://your-new-url.convex.cloud
+    ```
+  </Step>
+</Steps>
+
+### Via settings.json
+
+<Steps>
+  <Step title="Open settings.json">
+    - Press `Cmd+Shift+P` (macOS) or `Ctrl+Shift+P` (Windows/Linux)
+    - Type "Preferences: Open User Settings (JSON)"
+    - Press Enter
+  </Step>
+
+  <Step title="Add Configuration">
+    Add or update the `leopard.convexUrl` setting:
+
+    ```json
+    {
+      "leopard.convexUrl": "https://your-institution.convex.cloud"
+    }
+    ```
+  </Step>
+
+  <Step title="Save and Reload">
+    Save the file and reload VS Code (`Cmd+Shift+P` > "Developer: Reload Window") to apply the changes.
+  </Step>
+</Steps>
+
+<Note>
+  If you're unsure which Convex URL to use, check with your instructor. Using the wrong URL may prevent your work from being properly tracked for your assignments.
+</Note>
+
+## Workspace vs User Settings
+
+You can configure the Convex URL at different scopes:
+
+- **User Settings**: Applies globally to all VS Code projects
+- **Workspace Settings**: Applies only to the current project folder
+
+Instructors may provide a `.vscode/settings.json` file in assignment repositories with the correct Convex URL pre-configured. In this case, the workspace setting will override your user setting.
+
+## Verifying Configuration
+
+After changing the Convex URL, verify the extension is using the correct backend:
+
+1. Open the Output panel: `View > Output`
+2. Select **Leopard Event Logger** from the dropdown
+3. Look for the initialization line:
+
+```
+[INIT] Convex URL: https://your-configured-url.convex.cloud
+```
+
+If the URL doesn't match what you configured, try reloading VS Code.

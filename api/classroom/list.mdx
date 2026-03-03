@@ -1,0 +1,403 @@
+---
+title: List Classrooms
+description: Retrieve classrooms based on user role and permissions
+---
+
+## Student Endpoints
+
+### Get Enrolled Classrooms
+
+Retrieve all classrooms the current student is enrolled in.
+
+<CodeGroup>
+```typescript Query
+import { api } from "./_generated/api";
+import { useQuery } from "convex/react";
+
+const enrolledClassrooms = useQuery(api.web.classroom.getEnrolled);
+```
+
+```typescript Response
+[
+  {
+    _id: "classroom_123",
+    _creationTime: 1704067200000,
+    className: "Data Structures & Algorithms",
+    metadata: "{}",
+    ownerId: "user_teacher1",
+    assistantIds: [],
+    assignments: ["assignment_1", "assignment_2"]
+  }
+]
+```
+</CodeGroup>
+
+#### Function Signature
+
+```typescript web/classroom.ts:17
+export const getEnrolled = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+
+    if (!user) {
+      return [];
+    }
+
+    await requireStudentRole(ctx, user._id);
+
+    // lookup classrooms via classroomStudentsRelations
+    const classrooms = await getManyVia(
+      ctx.db,
+      "classroomStudentsRelations",
+      "classroomId",
+      "studentId_classroomId",
+      user._id,
+      "studentId",
+    );
+
+    return classrooms;
+  },
+});
+```
+
+#### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be authenticated as a student
+</ParamField>
+
+#### Return Type
+
+<ResponseField name="classrooms" type="array">
+  Array of classroom objects the student is enrolled in
+  
+  <Expandable title="Classroom fields">
+    <ResponseField name="_id" type="Id<'classrooms'>">
+      Unique classroom identifier
+    </ResponseField>
+    <ResponseField name="className" type="string">
+      Name of the classroom
+    </ResponseField>
+    <ResponseField name="metadata" type="string">
+      JSON string containing additional classroom metadata
+    </ResponseField>
+    <ResponseField name="ownerId" type="string">
+      User ID of the classroom owner (primary instructor)
+    </ResponseField>
+    <ResponseField name="assistantIds" type="string[]">
+      Array of user IDs for teaching assistants
+    </ResponseField>
+    <ResponseField name="assignments" type="Id<'assignments'>[]">
+      Array of assignment IDs belonging to this classroom
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Errors
+
+<ResponseField name="Only students can access classroom enrollment endpoints" type="error">
+  User does not have student role
+</ResponseField>
+
+---
+
+### Get Available Classrooms
+
+Retrieve all classrooms available for enrollment (not currently enrolled).
+
+<CodeGroup>
+```typescript Query
+import { api } from "./_generated/api";
+import { useQuery } from "convex/react";
+
+const availableClassrooms = useQuery(api.web.classroom.getAvailableToEnroll);
+```
+
+```typescript Response
+[
+  {
+    _id: "classroom_456",
+    className: "Machine Learning 102",
+    metadata: "{}",
+    ownerId: "user_teacher2",
+    assistantIds: ["user_ta1"],
+    assignments: ["assignment_3"]
+  }
+]
+```
+</CodeGroup>
+
+#### Function Signature
+
+```typescript web/classroom.ts:42
+export const getAvailableToEnroll = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await authComponent.safeGetAuthUser(ctx);
+
+    if (!user) {
+      return [];
+    }
+
+    await requireStudentRole(ctx, user._id);
+
+    // Get all classrooms
+    const allClassrooms = await ctx.db.query("classrooms").collect();
+
+    // Get enrolled classrooms via relations
+    const classrooms = await getManyVia(
+      ctx.db,
+      "classroomStudentsRelations",
+      "classroomId",
+      "studentId_classroomId",
+      user._id,
+      "studentId",
+    );
+
+    const enrolledClassroomIds = classrooms
+      .filter((c): c is NonNullable<typeof c> => c !== null)
+      .map((c) => c._id);
+
+    // Filter out enrolled classrooms
+    const availableClassrooms = allClassrooms.filter(
+      (classroom) => !enrolledClassroomIds.includes(classroom._id),
+    );
+
+    return availableClassrooms;
+  },
+});
+```
+
+#### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be authenticated as a student
+</ParamField>
+
+#### Return Type
+
+Returns an array of classroom objects. See [Get Enrolled Classrooms](#return-type) for field descriptions.
+
+---
+
+## Teacher/Admin Endpoints
+
+### Get My Classrooms
+
+Retrieve all classrooms accessible to the current teacher or admin.
+
+<CodeGroup>
+```typescript Query
+import { api } from "./_generated/api";
+import { useQuery } from "convex/react";
+
+const myClassrooms = useQuery(api.web.teacher.getMyClassrooms);
+```
+
+```typescript Response
+[
+  {
+    _id: "classroom_123",
+    className: "Data Structures & Algorithms",
+    metadata: "{}",
+    ownerId: "user_teacher1",
+    assistantIds: ["user_ta1"],
+    assignments: ["assignment_1", "assignment_2"]
+  }
+]
+```
+</CodeGroup>
+
+#### Function Signature
+
+```typescript web/teacher.ts:48
+export const getMyClassrooms = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await requireAuth(ctx);
+    await requireTeacherOrAdmin(ctx, user._id);
+
+    const role = await getUserRole(ctx, user._id);
+    const classrooms = await ctx.db.query("classrooms").collect();
+
+    if (role === "admin") {
+      return classrooms;
+    }
+
+    return classrooms.filter(
+      (c) => c.ownerId === user._id || c.assistantIds.includes(user._id),
+    );
+  },
+});
+```
+
+#### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be authenticated as a teacher or admin
+</ParamField>
+
+#### Behavior
+
+- **Admins**: Returns all classrooms in the system
+- **Teachers**: Returns only classrooms where they are the owner or listed as an assistant
+
+#### Return Type
+
+Returns an array of classroom objects. See [Get Enrolled Classrooms](#return-type) for field descriptions.
+
+---
+
+### Get Classroom Details
+
+Retrieve detailed information about a specific classroom, including assignments and enrolled students.
+
+<CodeGroup>
+```typescript Query
+import { api } from "./_generated/api";
+import { useQuery } from "convex/react";
+
+const details = useQuery(api.web.teacher.getClassroomDetails, {
+  classroomId: "classroom_123"
+});
+```
+
+```typescript Response
+{
+  classroom: {
+    _id: "classroom_123",
+    className: "Data Structures & Algorithms",
+    metadata: "{}",
+    ownerId: "user_teacher1",
+    assistantIds: ["user_ta1"],
+    assignments: ["assignment_1", "assignment_2"]
+  },
+  assignments: [
+    {
+      _id: "assignment_1",
+      name: "Binary Search Trees",
+      classroomId: "classroom_123",
+      dueDate: 1735689600000,
+      releaseDate: 1704067200000,
+      description: "Implement a BST with insert and search"
+    }
+  ],
+  enrolledStudents: [
+    {
+      _id: "relation_1",
+      studentId: "user_student1",
+      classroomId: "classroom_123",
+      studentName: "Alice Smith",
+      studentEmail: "alice@university.edu"
+    }
+  ],
+  studentCount: 25,
+  pendingEnrollments: []
+}
+```
+</CodeGroup>
+
+#### Function Signature
+
+```typescript web/teacher.ts:67
+export const getClassroomDetails = query({
+  args: {
+    classroomId: v.id("classrooms"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuth(ctx);
+    const classroom = await requireInstructorAccess(ctx, args.classroomId, user._id);
+
+    const assignments = (
+      await Promise.all(classroom.assignments.map((id) => ctx.db.get(id)))
+    ).filter((a): a is NonNullable<typeof a> => a !== null);
+
+    const enrolledStudents = await ctx.db
+      .query("classroomStudentsRelations")
+      .withIndex("classroomId_studentId", (q) => q.eq("classroomId", args.classroomId))
+      .collect();
+
+    const enrolledStudentsWithProfiles = await Promise.all(
+      enrolledStudents.map(async (enrollment) => {
+        const authUser = await authComponent.getAnyUserById(ctx, enrollment.studentId);
+        const studentName =
+          (authUser?.name && authUser.name.trim()) ||
+          (authUser?.displayUsername && authUser.displayUsername.trim()) ||
+          (authUser?.username && authUser.username.trim()) ||
+          null;
+
+        return {
+          ...enrollment,
+          studentName,
+          studentEmail: authUser?.email ?? null,
+        };
+      }),
+    );
+
+    return {
+      classroom,
+      assignments,
+      enrolledStudents: enrolledStudentsWithProfiles,
+      studentCount: enrolledStudentsWithProfiles.length,
+      pendingEnrollments: [],
+    };
+  },
+});
+```
+
+#### Parameters
+
+<ParamField path="classroomId" type="Id<'classrooms'>" required>
+  The classroom ID to retrieve details for
+</ParamField>
+
+#### Authentication
+
+<ParamField path="Authorization" type="Required">
+  Must be an instructor (owner or assistant) for the classroom, or an admin
+</ParamField>
+
+#### Return Type
+
+<ResponseField name="classroom" type="object">
+  The classroom object
+</ResponseField>
+
+<ResponseField name="assignments" type="array">
+  Array of assignment objects belonging to the classroom
+</ResponseField>
+
+<ResponseField name="enrolledStudents" type="array">
+  Array of enrollment relations with student profile information
+  
+  <Expandable title="fields">
+    <ResponseField name="studentId" type="string">
+      User ID of the enrolled student
+    </ResponseField>
+    <ResponseField name="studentName" type="string | null">
+      Display name of the student
+    </ResponseField>
+    <ResponseField name="studentEmail" type="string | null">
+      Email address of the student
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="studentCount" type="number">
+  Total number of enrolled students
+</ResponseField>
+
+<ResponseField name="pendingEnrollments" type="array">
+  Currently always empty (reserved for future approval workflows)
+</ResponseField>
+
+#### Errors
+
+<ResponseField name="Classroom not found" type="error">
+  The specified classroom ID does not exist
+</ResponseField>
+
+<ResponseField name="Not authorized for this classroom" type="error">
+  User is not an instructor or admin for this classroom
+</ResponseField>

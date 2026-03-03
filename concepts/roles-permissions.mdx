@@ -1,0 +1,374 @@
+---
+title: Roles & Permissions
+description: Understanding the role-based access control system in Leopard
+---
+
+## Overview
+
+Leopard implements a role-based access control (RBAC) system with three distinct roles: **Admin**, **Teacher**, and **Student**. Each role has specific permissions that control access to classrooms, assignments, submissions, and workspace data.
+
+## Role Hierarchy
+
+<CardGroup cols={3}>
+  <Card title="Admin" icon="crown" color="#ea5a0c">
+    Full system access with override capabilities
+  </Card>
+  <Card title="Teacher" icon="chalkboard-user" color="#0285c7">
+    Manage classrooms, assignments, and grade submissions
+  </Card>
+  <Card title="Student" icon="user-graduate" color="#16a34a">
+    Enroll in classrooms and submit assignments
+  </Card>
+</CardGroup>
+
+## Role Definitions
+
+### Admin
+
+Administrators have unrestricted access to all platform features.
+
+**Key Capabilities:**
+- View all classrooms across the entire platform
+- Access any classroom's details, regardless of ownership
+- Override classroom access restrictions
+- Manage any classroom, assignment, or submission
+- Delete any classroom (even if not the owner)
+- Full access to all student workspace data
+
+**Code Reference:**
+```typescript
+// schema.ts:61-64
+role: v.union(
+  v.literal("admin"),
+  v.literal("student"),
+  v.literal("teacher"),
+)
+```
+
+### Teacher
+
+Teachers can create and manage their own classrooms and assignments.
+
+**Key Capabilities:**
+- Create new classrooms
+- Manage classrooms they own or are assistants in
+- Create and manage assignments
+- View and grade student submissions
+- Add/remove students from their classrooms
+- Add teaching assistants to their classrooms
+- View workspace event history for their students' submissions
+
+**Restrictions:**
+- Cannot access classrooms they don't own/assist
+- Cannot delete classrooms they don't own (unless admin)
+- Cannot view submissions from other teachers' classrooms
+
+### Student
+
+Students can enroll in classrooms and submit assignments.
+
+**Key Capabilities:**
+- Enroll in classrooms
+- View their enrolled classrooms
+- View assignments in their classrooms (after release date)
+- Submit assignments before the due date
+- View their own submissions and grades (when released)
+- View their own workspace activity
+
+**Restrictions:**
+- Cannot create classrooms
+- Cannot create assignments
+- Cannot view other students' submissions
+- Cannot access teacher/admin endpoints
+- Cannot view other students' workspace data
+
+## Default Role Assignment
+
+When a new user signs up or is authenticated:
+
+```typescript
+// user.ts:7-18
+export async function getUserRole(ctx: DbCtx, userId: string): Promise<UserRole> {
+  const user = await ctx.db
+    .query("users")
+    .withIndex("uid", (q) => q.eq("uid", userId))
+    .first();
+
+  if (!user) {
+    return "student";  // Default role
+  }
+
+  return user.role;
+}
+```
+
+<Info>
+  **Default Role**: All new users are assigned the `student` role by default. Teachers and admins must be promoted manually.
+</Info>
+
+## Permission Checks
+
+### Role-Based Endpoint Protection
+
+Leopard uses helper functions to enforce role requirements:
+
+#### requireAuth
+
+Ensures the user is authenticated:
+
+```typescript
+export async function requireAuth(ctx: DbCtx) {
+  const user = await authComponent.safeGetAuthUser(ctx);
+  if (!user) {
+    throw new Error("Not authenticated");
+  }
+  return user;
+}
+```
+
+#### requireTeacherOrAdmin
+
+Restricts access to teachers and admins:
+
+```typescript
+export async function requireTeacherOrAdmin(ctx: DbCtx, userId: string) {
+  const role = await getUserRole(ctx, userId);
+  if (role !== "teacher" && role !== "admin") {
+    throw new Error("Only teachers can access this endpoint");
+  }
+}
+```
+
+### Classroom-Level Permissions
+
+#### Instructor Access
+
+A user has instructor access to a classroom if they are:
+1. The classroom owner (`ownerId`)
+2. A teaching assistant (`assistantIds`)
+3. An admin (bypasses ownership check)
+
+```typescript
+export async function requireInstructorAccess(
+  ctx: DbCtx,
+  classroomId: Id<"classrooms">,
+  userId: string,
+) {
+  await requireTeacherOrAdmin(ctx, userId);
+
+  const classroom = await ctx.db.get(classroomId);
+  if (!classroom) {
+    throw new Error("Classroom not found");
+  }
+
+  const role = await getUserRole(ctx, userId);
+  const isOwner = classroom.ownerId === userId;
+  const isAssistant = classroom.assistantIds.includes(userId);
+
+  if (!isOwner && !isAssistant && role !== "admin") {
+    throw new Error("Not authorized for this classroom");
+  }
+
+  return classroom;
+}
+```
+
+#### Owner-Only Actions
+
+Certain actions require classroom ownership:
+
+```typescript
+async function requireClassroomOwnerOrAdmin(
+  ctx: DbCtx,
+  classroomId: Id<"classrooms">,
+  userId: string,
+) {
+  const classroom = await requireInstructorAccess(ctx, classroomId, userId);
+  const role = await getUserRole(ctx, userId);
+
+  if (classroom.ownerId !== userId && role !== "admin") {
+    throw new Error("Only classroom owners can perform this action");
+  }
+
+  return classroom;
+}
+```
+
+Used for:
+- Deleting classrooms
+- Other destructive operations
+
+### Student Access Control
+
+Students can only access resources they're enrolled in:
+
+```typescript
+const role = await getUserRole(ctx, userId);
+
+if (role === "student") {
+  // Check enrollment
+  const enrollment = await ctx.db
+    .query("classroomStudentsRelations")
+    .withIndex("studentId_classroomId", (q) =>
+      q.eq("studentId", userId).eq("classroomId", classroomId),
+    )
+    .first();
+
+  if (!enrollment) {
+    throw new Error("Not enrolled in this classroom");
+  }
+}
+```
+
+## Permission Matrix
+
+### Classroom Operations
+
+| Operation | Admin | Teacher (Owner) | Teacher (Assistant) | Student |
+|-----------|-------|-----------------|---------------------|----------|
+| Create classroom | ✅ | ✅ | ✅ | ❌ |
+| View all classrooms | ✅ | ❌ (own only) | ❌ (own only) | ❌ (enrolled only) |
+| Update classroom | ✅ | ✅ | ✅ | ❌ |
+| Delete classroom | ✅ | ✅ | ❌ | ❌ |
+| Add/remove students | ✅ | ✅ | ✅ | ❌ |
+| Add/remove assistants | ✅ | ✅ | ❌ | ❌ |
+| Enroll in classroom | ✅ | ✅ | ✅ | ✅ |
+
+### Assignment Operations
+
+| Operation | Admin | Teacher (Owner) | Teacher (Assistant) | Student |
+|-----------|-------|-----------------|---------------------|----------|
+| Create assignment | ✅ | ✅ | ✅ | ❌ |
+| Update assignment | ✅ | ✅ | ✅ | ❌ |
+| Delete assignment | ✅ | ✅ | ✅ | ❌ |
+| View assignment (before release) | ✅ | ✅ | ✅ | ❌ |
+| View assignment (after release) | ✅ | ✅ | ✅ | ✅ (if enrolled) |
+| Submit assignment | ✅ | ✅ | ✅ | ✅ (if enrolled) |
+
+### Submission Operations
+
+| Operation | Admin | Teacher (Owner) | Teacher (Assistant) | Student |
+|-----------|-------|-----------------|---------------------|----------|
+| Submit assignment | ✅ | ✅ | ✅ | ✅ (own only) |
+| View all submissions | ✅ | ✅ | ✅ | ❌ |
+| View own submission | ✅ | ✅ | ✅ | ✅ |
+| Grade submission | ✅ | ✅ | ✅ | ❌ |
+| Release grades | ✅ | ✅ | ✅ | ❌ |
+| View workspace events | ✅ | ✅ | ✅ | ✅ (own only) |
+
+### Workspace Data
+
+| Operation | Admin | Teacher (Owner) | Teacher (Assistant) | Student |
+|-----------|-------|-----------------|---------------------|----------|
+| View workspace events | ✅ | ✅ (enrolled students) | ✅ (enrolled students) | ✅ (own only) |
+| Analyze coding timeline | ✅ | ✅ (enrolled students) | ✅ (enrolled students) | ✅ (own only) |
+
+## Schema Reference
+
+### User Schema
+
+```typescript
+users: defineTable({
+  uid: v.string(),  // Maps to betterAuth user ID
+  role: v.union(
+    v.literal("admin"),
+    v.literal("student"),
+    v.literal("teacher"),
+  )
+}).index("uid", ["uid"])
+```
+
+### Classroom Schema
+
+```typescript
+classrooms: defineTable({
+  className: v.string(),
+  metadata: v.string(),
+  ownerId: v.string(),           // Teacher who created the classroom
+  assistantIds: v.array(v.string()),  // Teaching assistants
+  assignments: v.array(v.id("assignments")),
+})
+```
+
+### Enrollment Schema
+
+```typescript
+classroomStudentsRelations: defineTable({
+  classroomId: v.id("classrooms"),
+  studentId: v.string(),
+})
+  .index("studentId_classroomId", ["studentId", "classroomId"])
+  .index("classroomId_studentId", ["classroomId", "studentId"])
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always Check Role First" icon="shield-check">
+    Always verify the user's role before checking specific permissions:
+    
+    ```typescript
+    const role = await getUserRole(ctx, userId);
+    if (role === "admin") {
+      // Admins bypass most checks
+      return allowAccess();
+    }
+    // Continue with specific permission checks
+    ```
+  </Accordion>
+  
+  <Accordion title="Use Helper Functions" icon="function">
+    Always use the provided helper functions instead of checking roles directly:
+    
+    ```typescript
+    // Good
+    await requireInstructorAccess(ctx, classroomId, userId);
+    
+    // Bad
+    const classroom = await ctx.db.get(classroomId);
+    if (classroom.ownerId !== userId) {
+      throw new Error("Unauthorized");
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Verify Enrollment" icon="user-check">
+    For student-facing endpoints, always verify enrollment:
+    
+    ```typescript
+    if (role === "student") {
+      const enrollment = await ctx.db
+        .query("classroomStudentsRelations")
+        .withIndex("studentId_classroomId", (q) =>
+          q.eq("studentId", userId).eq("classroomId", classroomId)
+        )
+        .first();
+      
+      if (!enrollment) {
+        throw new Error("Not enrolled");
+      }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Fail Securely" icon="lock">
+    When in doubt, deny access. It's better to be restrictive than permissive.
+    
+    ```typescript
+    if (!isAuthorized) {
+      throw new Error("Access denied");
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Related Topics
+
+<CardGroup cols={2}>
+  <Card title="How It Works" icon="diagram-project" href="/concepts/how-it-works">
+    Learn about the overall system architecture
+  </Card>
+  <Card title="Authentication" icon="users" href="/api/auth/overview">
+    Learn about user authentication and role assignments
+  </Card>
+</CardGroup>
