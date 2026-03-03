@@ -1,0 +1,133 @@
+{
+  "projectType": "saas",
+  "projectName": "Leopard",
+  "projectDescription": "Academic integrity platform that verifies student work legitimacy by analyzing granular version history through IDE tracking",
+  "theme": "linden",
+  "primaryColor": "#8B4513",
+  "lightColor": "#D2691E",
+  "darkColor": "#654321",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/how-it-works",
+              "concepts/event-tracking",
+              "concepts/roles-permissions"
+            ]
+          },
+          {
+            "group": "For Teachers",
+            "pages": [
+              "teachers/managing-classrooms",
+              "teachers/creating-assignments",
+              "teachers/grading-submissions",
+              "teachers/reviewing-history"
+            ]
+          },
+          {
+            "group": "For Students",
+            "pages": [
+              "students/setup-extension",
+              "students/joining-classrooms",
+              "students/submitting-assignments",
+              "students/workspace-tracking"
+            ]
+          },
+          {
+            "group": "VSCode Extension",
+            "pages": [
+              "extension/installation",
+              "extension/configuration",
+              "extension/features"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Authentication",
+            "pages": [
+              "api/auth/overview"
+            ]
+          },
+          {
+            "group": "Classroom Endpoints",
+            "pages": [
+              "api/classroom/list",
+              "api/classroom/create",
+              "api/classroom/enrollment"
+            ]
+          },
+          {
+            "group": "Assignment Endpoints",
+            "pages": [
+              "api/assignment/list",
+              "api/assignment/create",
+              "api/assignment/submissions"
+            ]
+          },
+          {
+            "group": "Event Tracking",
+            "pages": [
+              "api/events/overview",
+              "api/events/workspace-events"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Deployment",
+        "groups": [
+          {
+            "group": "Setup",
+            "pages": [
+              "deployment/overview",
+              "deployment/environment-variables",
+              "deployment/database-setup"
+            ]
+          },
+          {
+            "group": "Infrastructure",
+            "pages": [
+              "deployment/convex-backend",
+              "deployment/nextjs-deployment",
+              "deployment/coder-integration"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "IDE event tracking for academic integrity verification",
+    "Classroom and assignment management for educators",
+    "Student work submission with granular history replay",
+    "Role-based access control (admin, teacher, student)",
+    "VSCode extension for seamless workspace monitoring",
+    "Automated flagging system for suspicious patterns"
+  ],
+  "publicApiSurface": [
+    "web.classroom.getEnrolled",
+    "web.classroom.getAvailableToEnroll",
+    "web.classroom.create",
+    "web.assignment.list",
+    "web.assignment.create",
+    "web.assignment.submit",
+    "web.replay.getEvents",
+    "api.extension.reportEvent",
+    "api.coder.workspaceEvents"
+  ]
+}
